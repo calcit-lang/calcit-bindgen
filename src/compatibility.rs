@@ -275,7 +275,13 @@ fn compare_enum_variants(
 /// Compare one callable definition according to its support status.
 fn compare_definition(path: &str, old: &Definition, new: &Definition, changes: &mut Vec<Change>) {
     match (old.status, new.status) {
-        (DefinitionStatus::Unsupported, DefinitionStatus::Unsupported) => {}
+        (DefinitionStatus::Unsupported, DefinitionStatus::Unsupported) => {
+            // Lifecycle metadata is already a public contract even before a
+            // backend can generate an adapter for it. Keep ordinary unsupported
+            // diagnostics out of compatibility, but surface task/resource
+            // ownership changes deterministically.
+            compare_lifecycle_lowering(path, &old.lowering, &new.lowering, changes);
+        }
         (DefinitionStatus::Unsupported, DefinitionStatus::Supported) => {
             changes.push(additive(
                 format!("{path}.status"),
@@ -389,6 +395,27 @@ fn compare_lowering(path: &str, old: &Lowering, new: &Lowering, changes: &mut Ve
         format!("{path}.lowering.transport"),
         &old.transport,
         &new.transport,
+        changes,
+    );
+    compare_lifecycle_lowering(path, old, new, changes);
+}
+
+fn compare_lifecycle_lowering(
+    path: &str,
+    old: &Lowering,
+    new: &Lowering,
+    changes: &mut Vec<Change>,
+) {
+    compare_value(
+        format!("{path}.lowering.stream"),
+        &old.stream,
+        &new.stream,
+        changes,
+    );
+    compare_value(
+        format!("{path}.lowering.resource"),
+        &old.resource,
+        &new.resource,
         changes,
     );
 }

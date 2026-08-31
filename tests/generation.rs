@@ -17,6 +17,8 @@ fn document() -> Document {
         symbol: Some("read".to_owned()),
         invoke: Some("sync".to_owned()),
         transport: Some("edn-buffer-v1".to_owned()),
+        stream: None,
+        resource: None,
         raw: String::new(),
     };
     let signature = FunctionSignature {
@@ -172,6 +174,8 @@ fn all_types_document() -> Document {
                 symbol: Some("all_types".to_owned()),
                 invoke: Some("sync".to_owned()),
                 transport: Some("edn-buffer-v1".to_owned()),
+                stream: None,
+                resource: None,
                 raw: String::new(),
             },
             status: DefinitionStatus::Supported,

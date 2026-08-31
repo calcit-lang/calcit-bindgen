@@ -136,5 +136,55 @@ pub struct Lowering {
     pub symbol: Option<String>,
     pub invoke: Option<String>,
     pub transport: Option<String>,
+    /// Structured stream/task lifecycle metadata introduced by Interface IR v3.
+    /// It is absent from v2 documents and deliberately does not imply generated
+    /// async adapters yet.
+    #[serde(default)]
+    pub stream: Option<StreamLowering>,
+    /// Structured opaque-resource ownership metadata introduced by Interface IR
+    /// v3. It is absent from v2 documents.
+    #[serde(default)]
+    pub resource: Option<ResourceLowering>,
     pub raw: String,
+}
+
+/// Ownership at a native resource boundary.
+///
+/// `Own` transfers a newly-created resource lease to Calcit; `Borrow` passes an
+/// existing lease only for the duration of a call; `Clone` denotes an explicit
+/// additional lease when a future protocol supports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Ownership {
+    Own,
+    Borrow,
+    Clone,
+}
+
+/// Lifecycle metadata for a native async stream/task boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamLowering {
+    pub callback_parameter: usize,
+    #[serde(rename = "event")]
+    pub event_type: Type,
+    pub callback_result: Type,
+    pub cancel: String,
+    pub task_result: Ownership,
+}
+
+/// Borrow/clone contract for one native resource parameter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceParameterOwnership {
+    pub position: usize,
+    pub ownership: Ownership,
+}
+
+/// Lifecycle metadata for an opaque native resource boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceLowering {
+    pub protocol: String,
+    #[serde(default)]
+    pub result: Option<Ownership>,
+    #[serde(default)]
+    pub parameters: Vec<ResourceParameterOwnership>,
 }
