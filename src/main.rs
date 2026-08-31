@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use calcit_bindgen::{compare, load_document};
+use calcit_bindgen::{check_directory, compare, generate_directory, load_document};
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
@@ -20,6 +20,18 @@ enum Command {
         new: PathBuf,
         #[arg(long)]
         json: bool,
+    },
+    /// Generate deterministic managed artifacts and a versioned manifest.
+    Generate {
+        input: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Check generated artifacts without modifying the output directory.
+    Check {
+        input: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
     },
 }
 
@@ -62,6 +74,27 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             if !report.compatible {
                 return Err("breaking Interface IR changes detected".to_owned());
+            }
+        }
+        Command::Generate { input, out } => {
+            let manifest = generate_directory(&load_document(input)?, &out)?;
+            println!(
+                "generated {} artifact(s) for {} {} in {}",
+                manifest.files.len(),
+                manifest.package,
+                manifest.package_version,
+                out.display()
+            );
+        }
+        Command::Check { input, out } => {
+            let report = check_directory(&load_document(input)?, &out)?;
+            if report.current {
+                println!("generated artifacts are current: {}", out.display());
+            } else {
+                for issue in report.issues {
+                    eprintln!("[{}] {}: {}", issue.kind, issue.path, issue.message);
+                }
+                return Err("generated artifacts are not current".to_owned());
             }
         }
     }
