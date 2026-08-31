@@ -266,6 +266,21 @@ fn rust_generation_rejects_non_sync_transport_and_name_collisions() {
     assert!(error.contains("demo.value/read"));
     assert!(error.contains("demo-value/read"));
 
+    let mut service_colliding = document();
+    service_colliding.declarations.push(Declaration::Struct {
+        id: "demo/Ffi".to_owned(),
+        namespace: "demo".to_owned(),
+        name: "Ffi".to_owned(),
+        type_parameters: vec![],
+        fields: vec![],
+    });
+    let error = generate_directory(&service_colliding, &output)
+        .expect_err("generated service name collision must fail");
+    assert!(error.contains("Rust type name collision"));
+    assert!(error.contains("generated service trait for package demo"));
+    assert!(error.contains("demo/Ffi"));
+    assert!(error.contains("DemoFfi"));
+
     let mut invalid_symbol = document();
     invalid_symbol.definitions[0].lowering.symbol = Some("write-file".to_owned());
     let error =

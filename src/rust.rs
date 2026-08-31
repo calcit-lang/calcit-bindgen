@@ -37,12 +37,17 @@ struct RustNames {
 
 impl RustNames {
     fn new(document: &Document) -> Result<Self, String> {
+        let service = format!("{}Ffi", upper_name(&document.package));
         let mut types = BTreeMap::new();
         let mut methods = BTreeMap::new();
         let mut exports = BTreeMap::new();
         let mut seen_types = BTreeMap::new();
         let mut seen_methods = BTreeMap::new();
         let mut seen_exports = BTreeMap::new();
+        seen_types.insert(
+            service.clone(),
+            format!("<generated service trait for package {}>", document.package),
+        );
         for declaration in &document.declarations {
             let name = upper_name(declaration.id());
             insert_unique(&mut seen_types, &name, declaration.id(), "Rust type")?;
@@ -72,7 +77,7 @@ impl RustNames {
             types,
             methods,
             exports,
-            service: format!("{}Ffi", upper_name(&document.package)),
+            service,
             export_macro: format!("export_{}_ffi", lower_name(&document.package)),
         })
     }

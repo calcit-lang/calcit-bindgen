@@ -61,6 +61,8 @@ Rust backend 只接受 `native + sync + edn-buffer-v1`，生成 namespace-qualif
 codec 和 C export。生成物通过 `calcit-native-ffi` 处理 decode/encode failure、panic
 隔离和 buffer ownership，不复制 ABI 常量。async、callback、resource
 ownership/cancel/lifecycle 会明确失败，不通过 Dynamic fallback 假装支持。
+package 生成的 `<Package>Ffi` service trait 名属于保留 Rust type 名；declaration 映射到同名时 generation
+会在写文件前明确失败。
 
 消费 crate 需要依赖 `calcit_native_ffi = "0.1.3"` 和 `cirru_edn = "0.8.0"`，在 crate
 根部 `include!` 生成文件，实现其中的 package service trait，然后调用生成的
@@ -111,6 +113,8 @@ exports. `calcit-native-ffi` remains responsible for failure/panic isolation
 and buffer ownership; generated code does not copy ABI constants. Async,
 callback, and resource ownership/cancel/lifecycle fail explicitly, with no
 Dynamic fallback.
+The generated `<Package>Ffi` service trait is a reserved Rust type name. Generation fails before writing when a
+declaration maps to that same name.
 
 Consumer crates depend on `calcit_native_ffi = "0.1.3"` and
 `cirru_edn = "0.8.0"`, `include!` the generated file at crate root, implement
