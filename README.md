@@ -37,6 +37,14 @@ cargo run -- check interface.json --out generated
 `diff` 将新增 definition/declaration 标记为 additive；删除或修改现有 contract
 标记为 breaking，并以非零状态退出，适合 CI 守门。
 
+兼容性比较只覆盖生成代码和调用边界依赖的公开契约：package identity、nominal
+declaration shape、supported definition 的 signature/status，以及
+backend/target/kind/symbol/invoke/transport lowering。package version、文档、
+`logical_schema` 展示文本、`lowering.raw` 与 diagnostic metadata 不属于兼容性
+判定；这些内容未来由 stale-artifact `check` 处理，而不是误报 ABI breaking。
+unsupported definition 变为 supported 是 additive，反向变化是 breaking。报告路径
+精确到发生变化的字段，并使用稳定顺序输出。
+
 `generate` 当前产生规范化、稳定排序的 `interface.json` 和版本化
 `calcit-bindgen.manifest.json`。它们是后续 Rust/Calcit/TypeScript/WIT backend
 共享的真实 compatibility baseline，不是 placeholder binding。manifest 记录 generator、
@@ -65,6 +73,15 @@ non-monomorphic callables fail explicitly.
 `diff` classifies added definitions/declarations as additive. Removing or
 changing an existing contract is breaking and exits non-zero, making the
 command suitable for CI gates.
+
+Compatibility covers only the public contract consumed by generated code and
+call boundaries: package identity, nominal declaration shape, supported
+definition signatures/status, and backend/target/kind/symbol/invoke/transport
+lowering. Package versions, documentation, display-only `logical_schema`,
+`lowering.raw`, and diagnostic metadata do not cause ABI-breaking reports;
+future stale-artifact checks own those regeneration concerns. Enabling a
+previously unsupported definition is additive, while disabling a supported
+definition is breaking. Reports use deterministic field-level paths.
 
 `generate` currently writes a canonical, deterministically ordered
 `interface.json` plus a versioned `calcit-bindgen.manifest.json`. This is the
