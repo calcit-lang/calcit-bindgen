@@ -177,13 +177,14 @@ fn validate_lifecycle_lowering(
             ));
         }
         if let Some(signature) = definition.signature.as_ref()
-            && stream.callback_parameter >= signature.parameters.len()
+            && !signature
+                .parameters
+                .iter()
+                .any(|parameter| parameter.position == stream.callback_parameter)
         {
             return Err(format!(
-                "{}.lowering.stream.callback_parameter {} is outside the {} declared parameter(s)",
-                definition.id,
-                stream.callback_parameter,
-                signature.parameters.len()
+                "{}.lowering.stream.callback_parameter {} does not reference a declared parameter position",
+                definition.id, stream.callback_parameter
             ));
         }
     }
@@ -253,13 +254,14 @@ fn validate_lifecycle_lowering(
                 ));
             }
             if let Some(signature) = definition.signature.as_ref()
-                && parameter.position >= signature.parameters.len()
+                && !signature
+                    .parameters
+                    .iter()
+                    .any(|signature_parameter| signature_parameter.position == parameter.position)
             {
                 return Err(format!(
-                    "{}.lowering.resource.parameters[{}] is outside the {} declared parameter(s)",
-                    definition.id,
-                    parameter.position,
-                    signature.parameters.len()
+                    "{}.lowering.resource.parameters[{}] does not reference a declared parameter position",
+                    definition.id, parameter.position
                 ));
             }
         }

@@ -139,11 +139,11 @@ pub struct Lowering {
     /// Structured stream/task lifecycle metadata introduced by Interface IR v3.
     /// It is absent from v2 documents and deliberately does not imply generated
     /// async adapters yet.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<StreamLowering>,
     /// Structured opaque-resource ownership metadata introduced by Interface IR
     /// v3. It is absent from v2 documents.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource: Option<ResourceLowering>,
     pub raw: String,
 }

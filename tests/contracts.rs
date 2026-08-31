@@ -160,6 +160,13 @@ fn validates_a_monomorphic_composite_contract() {
 }
 
 #[test]
+fn v2_serialization_omits_absent_lifecycle_fields() {
+    let encoded = serde_json::to_string(&document()).expect("serialize v2 document");
+    assert!(!encoded.contains("\"stream\""));
+    assert!(!encoded.contains("\"resource\""));
+}
+
+#[test]
 fn validates_v3_lifecycle_contracts_without_enabling_generation() {
     let lifecycle = lifecycle_document();
     validate_document(&lifecycle).expect("valid lifecycle v3 document");
@@ -202,6 +209,34 @@ fn validates_v3_lifecycle_contracts_without_enabling_generation() {
         validate_document(&invalid_resource)
             .expect_err("input ownership must not imply an unspecified consume")
             .contains("cannot be own")
+    );
+
+    let mut invalid_stream_parameter = lifecycle_document();
+    invalid_stream_parameter.definitions[0].signature = Some(FunctionSignature {
+        parameters: vec![Parameter {
+            position: 3,
+            type_ir: Type::String,
+        }],
+        result: Type::Unit,
+    });
+    assert!(
+        validate_document(&invalid_stream_parameter)
+            .expect_err("callback must name a declared parameter position")
+            .contains("does not reference a declared parameter position")
+    );
+
+    let mut invalid_resource_parameter = lifecycle_document();
+    invalid_resource_parameter.definitions[2].signature = Some(FunctionSignature {
+        parameters: vec![Parameter {
+            position: 3,
+            type_ir: Type::String,
+        }],
+        result: Type::String,
+    });
+    assert!(
+        validate_document(&invalid_resource_parameter)
+            .expect_err("resource ownership must name a declared parameter position")
+            .contains("does not reference a declared parameter position")
     );
 
     let mut prematurely_supported = lifecycle_document();

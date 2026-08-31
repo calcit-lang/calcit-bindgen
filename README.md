@@ -110,8 +110,10 @@ command suitable for CI gates.
 
 Compatibility covers only the public contract consumed by generated code and
 call boundaries: package identity, nominal declaration shape, supported
-definition signatures/status, and backend/target/kind/symbol/invoke/transport
-lowering. Package versions, documentation, display-only `logical_schema`,
+definition signatures/status, backend/target/kind/symbol/invoke/transport
+lowering, and structured `lowering.stream` / `lowering.resource` lifecycle
+contracts. Changes to any of those lifecycle fields are breaking. Package
+versions, documentation, display-only `logical_schema`,
 `lowering.raw`, and diagnostic metadata do not cause ABI-breaking reports;
 future stale-artifact checks own those regeneration concerns. Enabling a
 previously unsupported definition is additive, while disabling a supported
