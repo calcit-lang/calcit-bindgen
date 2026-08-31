@@ -2,9 +2,11 @@ use std::fs;
 use std::process::Command;
 
 use calcit_bindgen::{
-    CheckIssueKind, Declaration, Definition, DefinitionStatus, Document, EnumVariant,
-    FunctionSignature, INTERFACE_FILE, Lowering, MANIFEST_FILE, Manifest, Parameter,
-    RUST_BINDINGS_FILE, StructField, Type, check_directory, generate_directory,
+    CALCIT_BINDINGS_FILE, CheckIssueKind, Declaration, Definition, DefinitionStatus, Document,
+    EnumVariant, FunctionSignature, GenerationBackend, INTERFACE_FILE, Lowering, MANIFEST_FILE,
+    Manifest, Parameter, RUST_BINDINGS_FILE, StructField, TYPESCRIPT_BINDINGS_FILE, Type,
+    WIT_BINDINGS_FILE, check_directory, generate_directory, generate_directory_with_backends,
+    load_document,
 };
 
 fn document() -> Document {
@@ -47,7 +49,10 @@ fn document() -> Document {
                 namespace: "demo".to_owned(),
                 name: "Choice".to_owned(),
                 type_parameters: vec![],
-                variants: vec![],
+                variants: vec![EnumVariant {
+                    name: "none".to_owned(),
+                    payload: vec![],
+                }],
             },
         ],
         definitions: vec![
@@ -180,9 +185,12 @@ fn generate_is_deterministic_and_check_is_read_only() {
     let root = tempfile::tempdir().expect("temporary directory");
     let output = root.path().join("generated");
     let first_manifest = generate_directory(&document(), &output).expect("first generation");
-    assert_eq!(first_manifest.files.len(), 2);
-    assert_eq!(first_manifest.files[0].path, INTERFACE_FILE);
-    assert_eq!(first_manifest.files[1].path, RUST_BINDINGS_FILE);
+    assert_eq!(first_manifest.files.len(), 5);
+    assert_eq!(first_manifest.files[0].path, CALCIT_BINDINGS_FILE);
+    assert_eq!(first_manifest.files[1].path, INTERFACE_FILE);
+    assert_eq!(first_manifest.files[2].path, RUST_BINDINGS_FILE);
+    assert_eq!(first_manifest.files[3].path, TYPESCRIPT_BINDINGS_FILE);
+    assert_eq!(first_manifest.files[4].path, WIT_BINDINGS_FILE);
     assert_eq!(first_manifest.digest_algorithm, "fnv1a-128");
     let first_interface = fs::read(output.join(INTERFACE_FILE)).expect("first interface");
     let first_manifest_bytes = fs::read(output.join(MANIFEST_FILE)).expect("first manifest");
@@ -292,7 +300,8 @@ fn rust_generation_rejects_non_sync_transport_and_name_collisions() {
 fn rust_generation_covers_every_strict_type_shape_without_fallbacks() {
     let root = tempfile::tempdir().expect("temporary directory");
     let output = root.path().join("generated");
-    generate_directory(&all_types_document(), &output).expect("generate all strict types");
+    generate_directory_with_backends(&all_types_document(), &output, &[GenerationBackend::Rust])
+        .expect("generate all strict Rust types");
     let rust = fs::read_to_string(output.join(RUST_BINDINGS_FILE)).expect("read Rust bindings");
     assert!(rust.contains("pub struct DemoSchemaBox<T>"));
     assert!(rust.contains("pub enum DemoSchemaChoice<T>"));
@@ -309,6 +318,115 @@ fn rust_generation_covers_every_strict_type_shape_without_fallbacks() {
     assert!(rust.contains("Result<Result<DemoSchemaChoice<String>, String>, String>"));
     assert!(!rust.contains("todo!"));
     assert!(!rust.contains("Dynamic"));
+}
+
+#[test]
+fn multitarget_generation_keeps_method_and_nominal_boundaries() {
+    let root = tempfile::tempdir().expect("temporary directory");
+    let output = root.path().join("generated");
+    let manifest = generate_directory(&document(), &output).expect("generate all backends");
+    assert_eq!(
+        manifest.backends,
+        vec![
+            GenerationBackend::Rust,
+            GenerationBackend::Calcit,
+            GenerationBackend::TypeScript,
+            GenerationBackend::Wit,
+        ]
+    );
+
+    let calcit =
+        fs::read_to_string(output.join(CALCIT_BINDINGS_FILE)).expect("read Calcit bindings");
+    assert!(calcit.contains("def DemoFfiMethods $ deftrait DemoFfiMethods"));
+    assert!(calcit.contains(".read $ fn (self arg0)"));
+    assert!(calcit.contains("&call-dylib-edn (:dylib-path self) |read arg0"));
+    assert!(calcit.contains("&call-dylib-edn (:dylib-path self) |read arg0\n      'String"));
+    assert!(calcit.contains("def DemoFfiClient $ impl-traits"));
+    assert!(!calcit.contains("read$raw"));
+
+    let typescript = fs::read_to_string(output.join(TYPESCRIPT_BINDINGS_FILE))
+        .expect("read TypeScript declarations");
+    assert!(typescript.contains("export interface DemoPerson"));
+    assert!(typescript.contains("export type DemoChoice"));
+    assert!(typescript.contains("export declare function read(arg0: DemoPerson): string;"));
+
+    let wit = fs::read_to_string(output.join(WIT_BINDINGS_FILE)).expect("read WIT");
+    assert!(wit.contains("record demo-person"));
+    assert!(wit.contains("variant demo-choice"));
+    assert!(wit.contains("read: func(arg0: demo-person) -> string;"));
+    let mut resolve = wit_parser::Resolve::default();
+    resolve
+        .push_path(output.join(WIT_BINDINGS_FILE))
+        .expect("parse generated WIT with Bytecode Alliance tooling");
+}
+
+#[test]
+fn composite_fixture_is_deterministic_and_wit_parses() {
+    let document =
+        load_document("tests/fixtures/composite-interface.json").expect("load composite fixture");
+    let root = tempfile::tempdir().expect("temporary directory");
+    let first = root.path().join("first");
+    let second = root.path().join("second");
+    let first_manifest = generate_directory(&document, &first).expect("first generation");
+    let second_manifest = generate_directory(&document, &second).expect("second generation");
+    assert_eq!(first_manifest, second_manifest);
+    for artifact in &first_manifest.files {
+        assert_eq!(
+            fs::read(first.join(&artifact.path)).expect("read first artifact"),
+            fs::read(second.join(&artifact.path)).expect("read second artifact"),
+            "{} must be byte-for-byte deterministic",
+            artifact.path
+        );
+    }
+
+    let typescript = fs::read_to_string(first.join(TYPESCRIPT_BINDINGS_FILE))
+        .expect("read TypeScript declarations");
+    assert!(typescript.contains("DemoSchemaPerson"));
+    assert!(typescript.contains("DemoSchemaOutcome"));
+    let wit_path = first.join(WIT_BINDINGS_FILE);
+    let mut resolve = wit_parser::Resolve::default();
+    resolve
+        .push_path(&wit_path)
+        .expect("parse generated composite WIT");
+}
+
+#[test]
+fn wit_rejects_unrepresentable_types_with_an_interface_path() {
+    let root = tempfile::tempdir().expect("temporary directory");
+    let output = root.path().join("generated");
+    let mut invalid = document();
+    invalid.definitions[0]
+        .signature
+        .as_mut()
+        .expect("signature")
+        .parameters[0]
+        .type_ir = Type::Unit;
+    let error = generate_directory(&invalid, &output).expect_err("Unit parameter must fail");
+    assert!(error.contains("definitions.demo/write.signature.parameters[0].type"));
+    assert!(error.contains("not a representable WIT parameter"));
+    assert!(!output.exists());
+}
+
+#[test]
+fn selected_backend_generation_and_check_share_the_same_manifest_scope() {
+    let root = tempfile::tempdir().expect("temporary directory");
+    let output = root.path().join("generated");
+    let manifest = generate_directory_with_backends(
+        &all_types_document(),
+        &output,
+        &[GenerationBackend::Rust],
+    )
+    .expect("generate Rust only");
+    assert_eq!(manifest.backends, vec![GenerationBackend::Rust]);
+    assert!(output.join(RUST_BINDINGS_FILE).is_file());
+    assert!(!output.join(WIT_BINDINGS_FILE).exists());
+    let report = calcit_bindgen::check_directory_with_backends(
+        &all_types_document(),
+        &output,
+        &[GenerationBackend::Rust],
+    )
+    .expect("check Rust-only output");
+    assert!(report.current);
 }
 
 #[test]
@@ -415,7 +533,7 @@ fn generate_and_check_cli_report_ci_friendly_status() {
     assert!(
         String::from_utf8(generate.stdout)
             .expect("generate stdout")
-            .contains("generated 2 artifact(s)")
+            .contains("generated 5 artifact(s)")
     );
 
     let check = Command::new(env!("CARGO_BIN_EXE_calcit-bindgen"))
@@ -454,5 +572,53 @@ fn generate_and_check_cli_report_ci_friendly_status() {
     let manifest: Manifest =
         serde_json::from_slice(&fs::read(output.join(MANIFEST_FILE)).expect("read manifest"))
             .expect("parse manifest");
-    assert_eq!(manifest.schema_version, 1);
+    assert_eq!(manifest.schema_version, 2);
+}
+
+#[test]
+fn cli_backend_selection_is_manifest_scoped() {
+    let root = tempfile::tempdir().expect("temporary directory");
+    let input = root.path().join("interface-input.json");
+    let output = root.path().join("generated");
+    fs::write(
+        &input,
+        serde_json::to_vec_pretty(&all_types_document()).expect("serialize input"),
+    )
+    .expect("write input");
+
+    let generate = Command::new(env!("CARGO_BIN_EXE_calcit-bindgen"))
+        .args([
+            "generate",
+            input.to_str().expect("input path"),
+            "--out",
+            output.to_str().expect("output path"),
+            "--backend",
+            "rust",
+        ])
+        .output()
+        .expect("run Rust-only generation");
+    assert!(
+        generate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generate.stderr)
+    );
+    assert!(String::from_utf8_lossy(&generate.stdout).contains("generated 2 artifact(s)"));
+
+    let check = Command::new(env!("CARGO_BIN_EXE_calcit-bindgen"))
+        .args([
+            "check",
+            input.to_str().expect("input path"),
+            "--out",
+            output.to_str().expect("output path"),
+            "--backend",
+            "rust",
+        ])
+        .output()
+        .expect("run Rust-only check");
+    assert!(check.status.success());
+    let manifest: Manifest = serde_json::from_slice(
+        &fs::read(output.join(MANIFEST_FILE)).expect("read selected manifest"),
+    )
+    .expect("parse selected manifest");
+    assert_eq!(manifest.backends, vec![GenerationBackend::Rust]);
 }

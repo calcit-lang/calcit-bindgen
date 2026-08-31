@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
-use calcit_bindgen::{check_directory, compare, generate_directory, load_document};
-use clap::{Parser, Subcommand};
+use calcit_bindgen::{
+    GenerationBackend, check_directory, check_directory_with_backends, compare, generate_directory,
+    generate_directory_with_backends, load_document,
+};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "calcit-bindgen", version, about)]
@@ -26,13 +29,39 @@ enum Command {
         input: PathBuf,
         #[arg(long)]
         out: PathBuf,
+        /// Generate only selected backends; omit to generate every backend.
+        #[arg(long = "backend", value_enum)]
+        backends: Vec<BackendArg>,
     },
     /// Check generated artifacts without modifying the output directory.
     Check {
         input: PathBuf,
         #[arg(long)]
         out: PathBuf,
+        /// Check only selected backends; must match the generated manifest.
+        #[arg(long = "backend", value_enum)]
+        backends: Vec<BackendArg>,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum BackendArg {
+    Rust,
+    Calcit,
+    #[value(name = "typescript")]
+    TypeScript,
+    Wit,
+}
+
+impl From<BackendArg> for GenerationBackend {
+    fn from(value: BackendArg) -> Self {
+        match value {
+            BackendArg::Rust => Self::Rust,
+            BackendArg::Calcit => Self::Calcit,
+            BackendArg::TypeScript => Self::TypeScript,
+            BackendArg::Wit => Self::Wit,
+        }
+    }
 }
 
 fn main() {
@@ -76,8 +105,21 @@ fn run(cli: Cli) -> Result<(), String> {
                 return Err("breaking Interface IR changes detected".to_owned());
             }
         }
-        Command::Generate { input, out } => {
-            let manifest = generate_directory(&load_document(input)?, &out)?;
+        Command::Generate {
+            input,
+            out,
+            backends,
+        } => {
+            let document = load_document(input)?;
+            let manifest = if backends.is_empty() {
+                generate_directory(&document, &out)?
+            } else {
+                let backends = backends
+                    .into_iter()
+                    .map(GenerationBackend::from)
+                    .collect::<Vec<_>>();
+                generate_directory_with_backends(&document, &out, &backends)?
+            };
             println!(
                 "generated {} artifact(s) for {} {} in {}",
                 manifest.files.len(),
@@ -86,8 +128,21 @@ fn run(cli: Cli) -> Result<(), String> {
                 out.display()
             );
         }
-        Command::Check { input, out } => {
-            let report = check_directory(&load_document(input)?, &out)?;
+        Command::Check {
+            input,
+            out,
+            backends,
+        } => {
+            let document = load_document(input)?;
+            let report = if backends.is_empty() {
+                check_directory(&document, &out)?
+            } else {
+                let backends = backends
+                    .into_iter()
+                    .map(GenerationBackend::from)
+                    .collect::<Vec<_>>();
+                check_directory_with_backends(&document, &out, &backends)?
+            };
             if report.current {
                 println!("generated artifacts are current: {}", out.display());
             } else {
