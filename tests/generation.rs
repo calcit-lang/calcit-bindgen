@@ -2,9 +2,9 @@ use std::fs;
 use std::process::Command;
 
 use calcit_bindgen::{
-    CheckIssueKind, Declaration, Definition, DefinitionStatus, Document, FunctionSignature,
-    INTERFACE_FILE, Lowering, MANIFEST_FILE, Manifest, Parameter, StructField, Type,
-    check_directory, generate_directory,
+    CheckIssueKind, Declaration, Definition, DefinitionStatus, Document, EnumVariant,
+    FunctionSignature, INTERFACE_FILE, Lowering, MANIFEST_FILE, Manifest, Parameter,
+    RUST_BINDINGS_FILE, StructField, Type, check_directory, generate_directory,
 };
 
 fn document() -> Document {
@@ -80,13 +80,109 @@ fn document() -> Document {
     }
 }
 
+fn all_types_document() -> Document {
+    let type_parameter = Type::TypeParameter {
+        name: "T".to_owned(),
+    };
+    let boxed_string = Type::Struct {
+        id: "demo.schema/Box".to_owned(),
+        arguments: vec![Type::String],
+    };
+    let choice_string = Type::Enum {
+        id: "demo.schema/Choice".to_owned(),
+        arguments: vec![Type::String],
+    };
+    let parameter_types = vec![
+        Type::Unit,
+        Type::Bool,
+        Type::Number,
+        Type::String,
+        Type::Buffer,
+        Type::List {
+            item: Box::new(Type::String),
+        },
+        boxed_string,
+        choice_string.clone(),
+        Type::Option {
+            item: Box::new(Type::String),
+        },
+        Type::Result {
+            ok: Box::new(Type::String),
+            error: Box::new(Type::String),
+        },
+    ];
+    Document {
+        version: 2,
+        package: "demo.types".to_owned(),
+        package_version: "0.1.0".to_owned(),
+        declarations: vec![
+            Declaration::Struct {
+                id: "demo.schema/Box".to_owned(),
+                namespace: "demo.schema".to_owned(),
+                name: "Box".to_owned(),
+                type_parameters: vec!["T".to_owned()],
+                fields: vec![StructField {
+                    name: "value".to_owned(),
+                    type_ir: type_parameter.clone(),
+                }],
+            },
+            Declaration::Enum {
+                id: "demo.schema/Choice".to_owned(),
+                namespace: "demo.schema".to_owned(),
+                name: "Choice".to_owned(),
+                type_parameters: vec!["T".to_owned()],
+                variants: vec![
+                    EnumVariant {
+                        name: "yes".to_owned(),
+                        payload: vec![type_parameter],
+                    },
+                    EnumVariant {
+                        name: "no".to_owned(),
+                        payload: vec![],
+                    },
+                ],
+            },
+        ],
+        definitions: vec![Definition {
+            id: "demo.ffi/all-types".to_owned(),
+            namespace: "demo.ffi".to_owned(),
+            name: "all-types".to_owned(),
+            doc: String::new(),
+            logical_schema: String::new(),
+            signature: Some(FunctionSignature {
+                parameters: parameter_types
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, type_ir)| Parameter { position, type_ir })
+                    .collect(),
+                result: Type::Result {
+                    ok: Box::new(choice_string),
+                    error: Box::new(Type::String),
+                },
+            }),
+            lowering: Lowering {
+                backend: Some("native".to_owned()),
+                target: None,
+                kind: Some("dylib-method".to_owned()),
+                symbol: Some("all_types".to_owned()),
+                invoke: Some("sync".to_owned()),
+                transport: Some("edn-buffer-v1".to_owned()),
+                raw: String::new(),
+            },
+            status: DefinitionStatus::Supported,
+            diagnostic_codes: vec![],
+        }],
+    }
+}
+
 #[test]
 fn generate_is_deterministic_and_check_is_read_only() {
     let root = tempfile::tempdir().expect("temporary directory");
     let output = root.path().join("generated");
     let first_manifest = generate_directory(&document(), &output).expect("first generation");
-    assert_eq!(first_manifest.files.len(), 1);
+    assert_eq!(first_manifest.files.len(), 2);
     assert_eq!(first_manifest.files[0].path, INTERFACE_FILE);
+    assert_eq!(first_manifest.files[1].path, RUST_BINDINGS_FILE);
     assert_eq!(first_manifest.digest_algorithm, "fnv1a-128");
     let first_interface = fs::read(output.join(INTERFACE_FILE)).expect("first interface");
     let first_manifest_bytes = fs::read(output.join(MANIFEST_FILE)).expect("first manifest");
@@ -149,6 +245,55 @@ fn generation_rejects_unsupported_definitions_before_writing() {
     let error = generate_directory(&unsupported, &output).expect_err("unsupported generation");
     assert!(error.contains("unsupported: demo/write"));
     assert!(!output.exists());
+}
+
+#[test]
+fn rust_generation_rejects_non_sync_transport_and_name_collisions() {
+    let root = tempfile::tempdir().expect("temporary directory");
+    let output = root.path().join("generated");
+    let mut asynchronous = document();
+    asynchronous.definitions[0].lowering.invoke = Some("async".to_owned());
+    let error = generate_directory(&asynchronous, &output).expect_err("async must fail");
+    assert!(error.contains("only native + sync + edn-buffer-v1"));
+    assert!(error.contains("demo/write"));
+    assert!(!output.exists());
+
+    let mut colliding = document();
+    colliding.definitions[0].id = "demo.value/read".to_owned();
+    colliding.definitions[1].id = "demo-value/read".to_owned();
+    let error = generate_directory(&colliding, &output).expect_err("name collision must fail");
+    assert!(error.contains("Rust method name collision"));
+    assert!(error.contains("demo.value/read"));
+    assert!(error.contains("demo-value/read"));
+
+    let mut invalid_symbol = document();
+    invalid_symbol.definitions[0].lowering.symbol = Some("write-file".to_owned());
+    let error =
+        generate_directory(&invalid_symbol, &output).expect_err("invalid export symbol must fail");
+    assert!(error.contains("cannot form the required buffer ABI export"));
+}
+
+#[test]
+fn rust_generation_covers_every_strict_type_shape_without_fallbacks() {
+    let root = tempfile::tempdir().expect("temporary directory");
+    let output = root.path().join("generated");
+    generate_directory(&all_types_document(), &output).expect("generate all strict types");
+    let rust = fs::read_to_string(output.join(RUST_BINDINGS_FILE)).expect("read Rust bindings");
+    assert!(rust.contains("pub struct DemoSchemaBox<T>"));
+    assert!(rust.contains("pub enum DemoSchemaChoice<T>"));
+    assert!(rust.contains("arg0: ()"));
+    assert!(rust.contains("arg1: bool"));
+    assert!(rust.contains("arg2: f64"));
+    assert!(rust.contains("arg3: String"));
+    assert!(rust.contains("arg4: CalcitBuffer"));
+    assert!(rust.contains("arg5: Vec<String>"));
+    assert!(rust.contains("arg6: DemoSchemaBox<String>"));
+    assert!(rust.contains("arg7: DemoSchemaChoice<String>"));
+    assert!(rust.contains("arg8: Option<String>"));
+    assert!(rust.contains("arg9: Result<String, String>"));
+    assert!(rust.contains("Result<Result<DemoSchemaChoice<String>, String>, String>"));
+    assert!(!rust.contains("todo!"));
+    assert!(!rust.contains("Dynamic"));
 }
 
 #[test]
@@ -255,7 +400,7 @@ fn generate_and_check_cli_report_ci_friendly_status() {
     assert!(
         String::from_utf8(generate.stdout)
             .expect("generate stdout")
-            .contains("generated 1 artifact(s)")
+            .contains("generated 2 artifact(s)")
     );
 
     let check = Command::new(env!("CARGO_BIN_EXE_calcit-bindgen"))

@@ -9,6 +9,7 @@ use tempfile::Builder;
 use crate::{Document, validate_document};
 
 pub const INTERFACE_FILE: &str = "interface.json";
+pub const RUST_BINDINGS_FILE: &str = "rust/bindings.rs";
 pub const MANIFEST_FILE: &str = "calcit-bindgen.manifest.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const GENERATOR_NAME: &str = "calcit-bindgen";
@@ -302,7 +303,11 @@ fn render(document: &Document) -> Result<RenderedOutput, String> {
         .map_err(|error| format!("failed to encode canonical Interface IR: {error}"))?;
     interface.push(b'\n');
     let contract_digest = digest(&interface);
-    let files = BTreeMap::from([(INTERFACE_FILE.to_owned(), interface)]);
+    let rust = crate::rust::render(&canonical)?.into_bytes();
+    let files = BTreeMap::from([
+        (INTERFACE_FILE.to_owned(), interface),
+        (RUST_BINDINGS_FILE.to_owned(), rust),
+    ]);
     let manifest = Manifest {
         schema_version: MANIFEST_SCHEMA_VERSION,
         generator: GENERATOR_NAME.to_owned(),
