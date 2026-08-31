@@ -197,6 +197,51 @@ fn compatibility_diff_treats_new_support_as_additive_and_removed_support_as_brea
 }
 
 #[test]
+fn compatibility_diff_reports_duplicate_ids_from_public_documents() {
+    let baseline = document();
+
+    let mut old_declarations = baseline.clone();
+    old_declarations
+        .declarations
+        .push(old_declarations.declarations[0].clone());
+    let report = compare(&old_declarations, &baseline);
+    assert!(!report.compatible);
+    assert!(report.changes.iter().any(|change| {
+        change.path == "old.declarations.demo/Person" && change.message == "duplicate ID"
+    }));
+
+    let mut new_declarations = baseline.clone();
+    new_declarations
+        .declarations
+        .push(new_declarations.declarations[0].clone());
+    let report = compare(&baseline, &new_declarations);
+    assert!(!report.compatible);
+    assert!(report.changes.iter().any(|change| {
+        change.path == "new.declarations.demo/Person" && change.message == "duplicate ID"
+    }));
+
+    let mut old_definitions = baseline.clone();
+    old_definitions
+        .definitions
+        .push(old_definitions.definitions[0].clone());
+    let report = compare(&old_definitions, &baseline);
+    assert!(!report.compatible);
+    assert!(report.changes.iter().any(|change| {
+        change.path == "old.definitions.demo/read" && change.message == "duplicate ID"
+    }));
+
+    let mut new_definitions = baseline.clone();
+    new_definitions
+        .definitions
+        .push(new_definitions.definitions[0].clone());
+    let report = compare(&baseline, &new_definitions);
+    assert!(!report.compatible);
+    assert!(report.changes.iter().any(|change| {
+        change.path == "new.definitions.demo/read" && change.message == "duplicate ID"
+    }));
+}
+
+#[test]
 fn diff_cli_uses_the_semantic_policy_for_json_and_text_output() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let old_path = directory.path().join("old.json");

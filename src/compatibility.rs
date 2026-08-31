@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 use std::fmt::Debug;
 
 use serde::Serialize;
@@ -42,16 +42,20 @@ pub fn compare(old: &Document, new: &Document) -> CompatibilityReport {
         ));
     }
 
-    let old_declarations = old
-        .declarations
-        .iter()
-        .map(|item| (item.id(), item))
-        .collect::<BTreeMap<_, _>>();
-    let new_declarations = new
-        .declarations
-        .iter()
-        .map(|item| (item.id(), item))
-        .collect::<BTreeMap<_, _>>();
+    let old_declarations = index_unique(
+        "old",
+        "declarations",
+        &old.declarations,
+        |item| item.id(),
+        &mut changes,
+    );
+    let new_declarations = index_unique(
+        "new",
+        "declarations",
+        &new.declarations,
+        |item| item.id(),
+        &mut changes,
+    );
     for (id, old_declaration) in &old_declarations {
         let path = format!("declarations.{id}");
         match new_declarations.get(id) {
@@ -67,16 +71,20 @@ pub fn compare(old: &Document, new: &Document) -> CompatibilityReport {
         }
     }
 
-    let old_definitions = old
-        .definitions
-        .iter()
-        .map(|item| (item.id.as_str(), item))
-        .collect::<BTreeMap<_, _>>();
-    let new_definitions = new
-        .definitions
-        .iter()
-        .map(|item| (item.id.as_str(), item))
-        .collect::<BTreeMap<_, _>>();
+    let old_definitions = index_unique(
+        "old",
+        "definitions",
+        &old.definitions,
+        |item| item.id.as_str(),
+        &mut changes,
+    );
+    let new_definitions = index_unique(
+        "new",
+        "definitions",
+        &new.definitions,
+        |item| item.id.as_str(),
+        &mut changes,
+    );
     for (id, old_definition) in &old_definitions {
         let path = format!("definitions.{id}");
         match new_definitions.get(id) {
@@ -100,6 +108,36 @@ pub fn compare(old: &Document, new: &Document) -> CompatibilityReport {
     }
 }
 
+/// Index values by ID while reporting invalid public `Document` vectors.
+///
+/// File loading validates uniqueness before comparison, but library callers may
+/// construct `Document` values directly. Keeping the first item makes the
+/// remaining field comparison deterministic while the duplicate itself makes
+/// the report incompatible.
+fn index_unique<'a, T>(
+    side: &str,
+    collection: &str,
+    items: &'a [T],
+    id: impl Fn(&'a T) -> &'a str,
+    changes: &mut Vec<Change>,
+) -> BTreeMap<&'a str, &'a T> {
+    let mut indexed = BTreeMap::new();
+    for item in items {
+        let item_id = id(item);
+        match indexed.entry(item_id) {
+            Entry::Vacant(entry) => {
+                entry.insert(item);
+            }
+            Entry::Occupied(_) => changes.push(breaking(
+                format!("{side}.{collection}.{item_id}"),
+                "duplicate ID",
+            )),
+        }
+    }
+    indexed
+}
+
+/// Compare one nominal declaration after both documents are indexed.
 fn compare_declaration(
     path: &str,
     old: &Declaration,
@@ -176,6 +214,7 @@ fn compare_declaration(
     }
 }
 
+/// Compare ordered struct fields because field order participates in layout.
 fn compare_struct_fields(
     path: &str,
     old: &[StructField],
@@ -204,6 +243,7 @@ fn compare_struct_fields(
     }
 }
 
+/// Compare ordered enum variants and each variant payload.
 fn compare_enum_variants(
     path: &str,
     old: &[EnumVariant],
@@ -232,6 +272,7 @@ fn compare_enum_variants(
     }
 }
 
+/// Compare one callable definition according to its support status.
 fn compare_definition(path: &str, old: &Definition, new: &Definition, changes: &mut Vec<Change>) {
     match (old.status, new.status) {
         (DefinitionStatus::Unsupported, DefinitionStatus::Unsupported) => {}
@@ -266,6 +307,7 @@ fn compare_definition(path: &str, old: &Definition, new: &Definition, changes: &
     }
 }
 
+/// Compare the monomorphic callable signature consumed by generated adapters.
 fn compare_signature(
     path: &str,
     old: Option<&FunctionSignature>,
@@ -311,6 +353,7 @@ fn compare_signature(
     }
 }
 
+/// Compare the structured lowering fields used at the host call boundary.
 fn compare_lowering(path: &str, old: &Lowering, new: &Lowering, changes: &mut Vec<Change>) {
     compare_value(
         format!("{path}.lowering.backend"),
@@ -350,18 +393,21 @@ fn compare_lowering(path: &str, old: &Lowering, new: &Lowering, changes: &mut Ve
     );
 }
 
+/// Report an ordered collection length change as breaking.
 fn compare_length(path: String, old: usize, new: usize, changes: &mut Vec<Change>) {
     if old != new {
         changes.push(breaking(path, format!("changed from {old} to {new}")));
     }
 }
 
+/// Report one changed contract value with stable debug rendering.
 fn compare_value<T: Debug + PartialEq>(path: String, old: &T, new: &T, changes: &mut Vec<Change>) {
     if old != new {
         changes.push(breaking(path, format!("changed from {old:?} to {new:?}")));
     }
 }
 
+/// Construct an additive compatibility change.
 fn additive(path: impl Into<String>, message: impl Into<String>) -> Change {
     Change {
         kind: ChangeKind::Additive,
@@ -370,6 +416,7 @@ fn additive(path: impl Into<String>, message: impl Into<String>) -> Change {
     }
 }
 
+/// Construct a breaking compatibility change.
 fn breaking(path: impl Into<String>, message: impl Into<String>) -> Change {
     Change {
         kind: ChangeKind::Breaking,
