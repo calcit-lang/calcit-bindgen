@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use crate::{Declaration, DefinitionStatus, Document, Envelope, Type};
+use crate::{Declaration, Definition, DefinitionStatus, Document, Envelope, Ownership, Type};
 
 pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     let path = path.as_ref();
@@ -29,9 +29,9 @@ pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
 }
 
 pub fn validate_document(document: &Document) -> Result<(), String> {
-    if document.version != 2 {
+    if !matches!(document.version, 2 | 3) {
         return Err(format!(
-            "unsupported Interface IR version {}; calcit-bindgen requires v2",
+            "unsupported Interface IR version {}; calcit-bindgen requires v2 or v3",
             document.version
         ));
     }
@@ -113,6 +113,183 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
             }
             (DefinitionStatus::Unsupported, Some(_)) | (DefinitionStatus::Unsupported, None) => {}
         }
+        validate_lifecycle_lowering(document.version, definition, &declarations)?;
+    }
+    Ok(())
+}
+
+fn validate_lifecycle_lowering(
+    version: u32,
+    definition: &Definition,
+    declarations: &BTreeMap<&str, &Declaration>,
+) -> Result<(), String> {
+    let lowering = &definition.lowering;
+    if version == 2 && (lowering.stream.is_some() || lowering.resource.is_some()) {
+        return Err(format!(
+            "{} uses lifecycle lowering, which requires Interface IR v3",
+            definition.id
+        ));
+    }
+    if lowering.stream.is_some() && lowering.resource.is_some() {
+        return Err(format!(
+            "{} cannot declare both stream and resource lifecycle lowering",
+            definition.id
+        ));
+    }
+    if (lowering.stream.is_some() || lowering.resource.is_some())
+        && definition.status != DefinitionStatus::Unsupported
+    {
+        return Err(format!(
+            "{} declares lifecycle lowering but must remain unsupported until a backend adapter and conformance vectors exist",
+            definition.id
+        ));
+    }
+
+    if let Some(stream) = &lowering.stream {
+        require_lowering(
+            definition,
+            "stream",
+            (
+                Some("native"),
+                Some("async"),
+                Some("async-task-v1"),
+                Some("async-stream"),
+            ),
+        )?;
+        if stream.cancel != "cooperative" {
+            return Err(format!(
+                "{}.lowering.stream.cancel must be cooperative, got {:?}",
+                definition.id, stream.cancel
+            ));
+        }
+        if stream.task_result != Ownership::Own {
+            return Err(format!(
+                "{}.lowering.stream.task_result must be own",
+                definition.id
+            ));
+        }
+        let none = BTreeSet::new();
+        validate_type(&stream.event_type, declarations, &none, false)?;
+        if stream.callback_result != Type::Unit {
+            return Err(format!(
+                "{}.lowering.stream.callback_result must be Unit in lifecycle IR v3",
+                definition.id
+            ));
+        }
+        if let Some(signature) = definition.signature.as_ref()
+            && !signature
+                .parameters
+                .iter()
+                .any(|parameter| parameter.position == stream.callback_parameter)
+        {
+            return Err(format!(
+                "{}.lowering.stream.callback_parameter {} does not reference a declared parameter position",
+                definition.id, stream.callback_parameter
+            ));
+        }
+    }
+
+    if let Some(resource) = &lowering.resource {
+        require_lowering(
+            definition,
+            "resource",
+            (Some("native"), Some("sync"), Some("edn-buffer-v1"), None),
+        )?;
+        if resource.protocol != "opaque-resource-v1" {
+            return Err(format!(
+                "{}.lowering.resource.protocol must be opaque-resource-v1, got {:?}",
+                definition.id, resource.protocol
+            ));
+        }
+        let kind = lowering.kind.as_deref();
+        match kind {
+            Some("resource-constructor") => {
+                if resource.result != Some(Ownership::Own) {
+                    return Err(format!(
+                        "{}.lowering.resource.result must be own for a resource constructor",
+                        definition.id
+                    ));
+                }
+                if !resource.parameters.is_empty() {
+                    return Err(format!(
+                        "{}.lowering.resource.parameters must be empty for a resource constructor",
+                        definition.id
+                    ));
+                }
+            }
+            Some("resource-method") => {
+                if resource.result.is_some() {
+                    return Err(format!(
+                        "{}.lowering.resource.result is only valid for a resource constructor",
+                        definition.id
+                    ));
+                }
+                if resource.parameters.is_empty() {
+                    return Err(format!(
+                        "{}.lowering.resource.parameters must declare at least one borrowed or cloned resource",
+                        definition.id
+                    ));
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "{}.lowering.resource requires kind resource-constructor or resource-method",
+                    definition.id
+                ));
+            }
+        }
+
+        let mut positions = BTreeSet::new();
+        for parameter in &resource.parameters {
+            if !positions.insert(parameter.position) {
+                return Err(format!(
+                    "{}.lowering.resource.parameters repeats position {}",
+                    definition.id, parameter.position
+                ));
+            }
+            if parameter.ownership == Ownership::Own {
+                return Err(format!(
+                    "{}.lowering.resource.parameters[{}].ownership cannot be own; input resources are borrow or clone until a consuming ABI is specified",
+                    definition.id, parameter.position
+                ));
+            }
+            if let Some(signature) = definition.signature.as_ref()
+                && !signature
+                    .parameters
+                    .iter()
+                    .any(|signature_parameter| signature_parameter.position == parameter.position)
+            {
+                return Err(format!(
+                    "{}.lowering.resource.parameters[{}] does not reference a declared parameter position",
+                    definition.id, parameter.position
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn require_lowering(
+    definition: &Definition,
+    lifecycle: &str,
+    expected: (Option<&str>, Option<&str>, Option<&str>, Option<&str>),
+) -> Result<(), String> {
+    let lowering = &definition.lowering;
+    let actual = (
+        lowering.backend.as_deref(),
+        lowering.invoke.as_deref(),
+        lowering.transport.as_deref(),
+        lowering.kind.as_deref(),
+    );
+    if expected.0.is_some_and(|value| actual.0 != Some(value))
+        || expected.1.is_some_and(|value| actual.1 != Some(value))
+        || expected.2.is_some_and(|value| actual.2 != Some(value))
+        || expected.3.is_some_and(|value| actual.3 != Some(value))
+    {
+        return Err(format!(
+            "{}.lowering.{lifecycle} conflicts with backend={:?}, invoke={:?}, transport={:?}, kind={:?}",
+            definition.id, actual.0, actual.1, actual.2, actual.3
+        ));
     }
     Ok(())
 }

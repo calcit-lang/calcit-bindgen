@@ -7,7 +7,7 @@ Interface IR.
 
 ## Status / 状态
 
-本仓库处于 **active development / experimental tooling** 阶段。v2 validation、
+本仓库处于 **active development / experimental tooling** 阶段。v2/v3 validation、
 compatibility diff、canonical generate/check，以及严格同步 Rust、Calcit、TypeScript、WIT
 backends 已可用；在更多真实模块迁移和 core cutover 完成前，尚不替代 Calcit core 的 preview generator。公开、
 版本化的 Interface IR 由 Calcit core 定义；本工具独立发布，production MVP 由
@@ -23,9 +23,9 @@ independent release cadence tracked by calcit-bindgen#5.
 ## 中文
 
 该 crate 独立于 Calcit core，严格消费 `calcit ffi export --json` 产生的版本化
-Interface IR。当前第一段实现提供 v2 envelope/document 校验和兼容性 diff，确保
-未知版本、缺失 declaration、错误 nominal kind/arity、非 monomorphic callable 在
-进入生成器前失败。
+Interface IR。当前实现校验 v2 sync document 与 v3 lifecycle metadata，并提供兼容性
+diff，确保未知版本、缺失 declaration、错误 nominal kind/arity、非 monomorphic
+callable 或矛盾的 task/resource ownership 在进入生成器前失败。
 
 ```bash
 calcit project/calcit.cirru ffi export --json > interface.json
@@ -83,7 +83,7 @@ WIT 只生成严格可表示的 monomorphic subset；Unit field/parameter、gene
 | Struct/Enum/Option/Result | codecs | qualified schema references | qualified generated names | monomorphic only |
 | Generic declarations | yes | applied callable references | yes | unsupported |
 | `native + sync + edn-buffer-v1` | yes | yes | declaration view | interface view |
-| async/callback/resource lifecycle | unsupported | unsupported | unsupported | unsupported |
+| async/callback/resource lifecycle | v3 contract validated; generation unsupported | v3 contract validated; generation unsupported | v3 contract validated; generation unsupported | v3 contract validated; generation unsupported |
 
 非目标包括猜测 Dynamic、把 resource 伪装成 Struct、生成双向 Component bindings，以及在本仓库
 重新定义 Calcit Interface IR 或 native ABI。
@@ -98,10 +98,11 @@ WIT 只生成严格可表示的 monomorphic subset；Unit field/parameter、gene
 ## English
 
 This crate is independent of Calcit core and strictly consumes versioned
-Interface IR emitted by `calcit ffi export --json`. The initial slice validates
-v2 envelopes/documents and reports compatibility changes before generation.
-Unknown versions, missing declarations, nominal kind/arity mismatches, and
-non-monomorphic callables fail explicitly.
+Interface IR emitted by `calcit ffi export --json`. It validates v2 synchronous
+documents and v3 lifecycle metadata, then reports compatibility changes before
+generation. Unknown versions, missing declarations, nominal kind/arity
+mismatches, non-monomorphic callables, and contradictory task/resource
+ownership fail explicitly.
 
 `diff` classifies added definitions/declarations as additive. Removing or
 changing an existing contract is breaking and exits non-zero, making the
@@ -109,8 +110,10 @@ command suitable for CI gates.
 
 Compatibility covers only the public contract consumed by generated code and
 call boundaries: package identity, nominal declaration shape, supported
-definition signatures/status, and backend/target/kind/symbol/invoke/transport
-lowering. Package versions, documentation, display-only `logical_schema`,
+definition signatures/status, backend/target/kind/symbol/invoke/transport
+lowering, and structured `lowering.stream` / `lowering.resource` lifecycle
+contracts. Changes to any of those lifecycle fields are breaking. Package
+versions, documentation, display-only `logical_schema`,
 `lowering.raw`, and diagnostic metadata do not cause ABI-breaking reports;
 future stale-artifact checks own those regeneration concerns. Enabling a
 previously unsupported definition is additive, while disabling a supported
@@ -148,9 +151,11 @@ Unit value positions, generics, and other unsupported shapes. CI parses WIT
 with Bytecode Alliance `wit-parser`; release evidence also runs `wasm-tools
 component wit`.
 
-The capability matrix above is normative for the current MVP. Async, callback,
-resource lifecycle, Dynamic guessing, bidirectional Component bindings, and
-ownership of the Interface IR or native ABI are explicit non-goals.
+The capability matrix above is normative for the current MVP. v3 lifecycle
+contracts are validated and diffed, but async/callback/resource adapters remain
+explicitly unsupported until their conformance vectors and generated runtime
+lowering land. Dynamic guessing, bidirectional Component bindings, and
+ownership of the Interface IR or native ABI remain explicit non-goals.
 
 Consumer crates depend on `calcit_native_ffi = "0.1.3"` and
 `cirru_edn = "0.8.0"`, `include!` the generated file at crate root, implement
