@@ -10,8 +10,11 @@ use crate::{Document, validate_document};
 
 pub const INTERFACE_FILE: &str = "interface.json";
 pub const RUST_BINDINGS_FILE: &str = "rust/bindings.rs";
+pub const CALCIT_BINDINGS_FILE: &str = "calcit/bindings.cirru";
+pub const TYPESCRIPT_BINDINGS_FILE: &str = "typescript/bindings.d.ts";
+pub const WIT_BINDINGS_FILE: &str = "wit/interface.wit";
 pub const MANIFEST_FILE: &str = "calcit-bindgen.manifest.json";
-const MANIFEST_SCHEMA_VERSION: u32 = 1;
+const MANIFEST_SCHEMA_VERSION: u32 = 2;
 const GENERATOR_NAME: &str = "calcit-bindgen";
 const DIGEST_ALGORITHM: &str = "fnv1a-128";
 
@@ -33,7 +36,30 @@ pub struct Manifest {
     pub package_version: String,
     pub digest_algorithm: String,
     pub contract_digest: String,
+    #[serde(default = "legacy_manifest_backends")]
+    pub backends: Vec<GenerationBackend>,
     pub files: Vec<ArtifactDigest>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GenerationBackend {
+    Rust,
+    Calcit,
+    #[serde(rename = "typescript")]
+    TypeScript,
+    Wit,
+}
+
+const ALL_BACKENDS: [GenerationBackend; 4] = [
+    GenerationBackend::Rust,
+    GenerationBackend::Calcit,
+    GenerationBackend::TypeScript,
+    GenerationBackend::Wit,
+];
+
+fn legacy_manifest_backends() -> Vec<GenerationBackend> {
+    vec![GenerationBackend::Rust]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -81,8 +107,16 @@ pub fn generate_directory(
     document: &Document,
     output: impl AsRef<Path>,
 ) -> Result<Manifest, String> {
+    generate_directory_with_backends(document, output, &ALL_BACKENDS)
+}
+
+pub fn generate_directory_with_backends(
+    document: &Document,
+    output: impl AsRef<Path>,
+    backends: &[GenerationBackend],
+) -> Result<Manifest, String> {
     let output = output.as_ref();
-    let rendered = render(document)?;
+    let rendered = render(document, backends)?;
     let parent = output_parent(output)?;
     fs::create_dir_all(parent).map_err(|error| {
         format!(
@@ -168,8 +202,16 @@ pub fn check_directory(
     document: &Document,
     output: impl AsRef<Path>,
 ) -> Result<CheckReport, String> {
+    check_directory_with_backends(document, output, &ALL_BACKENDS)
+}
+
+pub fn check_directory_with_backends(
+    document: &Document,
+    output: impl AsRef<Path>,
+    backends: &[GenerationBackend],
+) -> Result<CheckReport, String> {
     let output = output.as_ref();
-    let rendered = render(document)?;
+    let rendered = render(document, backends)?;
     let mut issues = Vec::new();
     if !output.exists() {
         issues.push(issue(
@@ -274,7 +316,7 @@ pub fn check_directory(
     })
 }
 
-fn render(document: &Document) -> Result<RenderedOutput, String> {
+fn render(document: &Document, backends: &[GenerationBackend]) -> Result<RenderedOutput, String> {
     validate_document(document)?;
     let unsupported = document
         .definitions
@@ -288,6 +330,7 @@ fn render(document: &Document) -> Result<RenderedOutput, String> {
             unsupported.join(", ")
         ));
     }
+    validate_generation_lowerings(document)?;
     let mut canonical = document.clone();
     canonical
         .declarations
@@ -303,11 +346,23 @@ fn render(document: &Document) -> Result<RenderedOutput, String> {
         .map_err(|error| format!("failed to encode canonical Interface IR: {error}"))?;
     interface.push(b'\n');
     let contract_digest = digest(&interface);
-    let rust = crate::rust::render(&canonical)?.into_bytes();
-    let files = BTreeMap::from([
-        (INTERFACE_FILE.to_owned(), interface),
-        (RUST_BINDINGS_FILE.to_owned(), rust),
-    ]);
+    let backends = backends.iter().copied().collect::<BTreeSet<_>>();
+    if backends.is_empty() {
+        return Err("generation requires at least one backend".to_owned());
+    }
+    let mut files = BTreeMap::from([(INTERFACE_FILE.to_owned(), interface)]);
+    for backend in &backends {
+        let (path, content) = match backend {
+            GenerationBackend::Rust => (RUST_BINDINGS_FILE, crate::rust::render(&canonical)?),
+            GenerationBackend::Calcit => (CALCIT_BINDINGS_FILE, crate::calcit::render(&canonical)?),
+            GenerationBackend::TypeScript => (
+                TYPESCRIPT_BINDINGS_FILE,
+                crate::typescript::render(&canonical)?,
+            ),
+            GenerationBackend::Wit => (WIT_BINDINGS_FILE, crate::wit::render(&canonical)?),
+        };
+        files.insert(path.to_owned(), content.into_bytes());
+    }
     let manifest = Manifest {
         schema_version: MANIFEST_SCHEMA_VERSION,
         generator: GENERATOR_NAME.to_owned(),
@@ -317,6 +372,7 @@ fn render(document: &Document) -> Result<RenderedOutput, String> {
         package_version: canonical.package_version,
         digest_algorithm: DIGEST_ALGORITHM.to_owned(),
         contract_digest,
+        backends: backends.into_iter().collect(),
         files: files
             .iter()
             .map(|(path, bytes)| ArtifactDigest {
@@ -326,6 +382,39 @@ fn render(document: &Document) -> Result<RenderedOutput, String> {
             .collect(),
     };
     Ok(RenderedOutput { manifest, files })
+}
+
+fn validate_generation_lowerings(document: &Document) -> Result<(), String> {
+    let unsupported = document
+        .definitions
+        .iter()
+        .filter(|definition| {
+            definition.lowering.backend.as_deref() != Some("native")
+                || definition.lowering.invoke.as_deref() != Some("sync")
+                || definition.lowering.transport.as_deref() != Some("edn-buffer-v1")
+        })
+        .map(|definition| {
+            format!(
+                "{} (backend={}, invoke={}, transport={})",
+                definition.id,
+                definition.lowering.backend.as_deref().unwrap_or("missing"),
+                definition.lowering.invoke.as_deref().unwrap_or("missing"),
+                definition
+                    .lowering
+                    .transport
+                    .as_deref()
+                    .unwrap_or("missing")
+            )
+        })
+        .collect::<Vec<_>>();
+    if unsupported.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "generation supports only native + sync + edn-buffer-v1 definitions; unsupported: {}",
+            unsupported.join(", ")
+        ))
+    }
 }
 
 fn write_rendered(directory: &Path, rendered: &RenderedOutput) -> Result<(), String> {
@@ -370,7 +459,9 @@ fn ensure_owned_directory(output: &Path) -> Result<(), String> {
             output.display()
         )
     })?;
-    if manifest.schema_version != MANIFEST_SCHEMA_VERSION || manifest.generator != GENERATOR_NAME {
+    if !(1..=MANIFEST_SCHEMA_VERSION).contains(&manifest.schema_version)
+        || manifest.generator != GENERATOR_NAME
+    {
         return Err(format!(
             "refusing to replace {}: unsupported ownership manifest",
             output.display()
