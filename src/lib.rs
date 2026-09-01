@@ -19,7 +19,6 @@ pub use generate::{
 };
 pub use model::{
     Declaration, Definition, DefinitionStatus, Document, EnumVariant, Envelope, FunctionSignature,
-    Lowering, Ownership, Parameter, ResourceLowering, ResourceParameterOwnership, StreamLowering,
-    StructField, Type,
+    Lowering, Parameter, StructField, Type,
 };
 pub use validate::{load_document, validate_document};
