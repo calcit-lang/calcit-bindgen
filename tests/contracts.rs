@@ -1,7 +1,6 @@
 use calcit_bindgen::{
     ChangeKind, Declaration, Definition, DefinitionStatus, Document, FunctionSignature, Lowering,
-    Ownership, Parameter, ResourceLowering, ResourceParameterOwnership, StreamLowering,
-    StructField, Type, compare, validate_document,
+    Parameter, StructField, Type, compare, validate_document,
 };
 use std::fs;
 use std::process::Command;
@@ -41,8 +40,6 @@ fn document() -> Document {
                 symbol: Some("read".to_owned()),
                 invoke: Some("sync".to_owned()),
                 transport: Some("edn-buffer-v1".to_owned()),
-                stream: None,
-                resource: None,
                 raw: String::new(),
             },
             status: DefinitionStatus::Supported,
@@ -51,208 +48,9 @@ fn document() -> Document {
     }
 }
 
-fn lifecycle_document() -> Document {
-    Document {
-        version: 3,
-        package: "demo.lifecycle".to_owned(),
-        package_version: "0.1.0".to_owned(),
-        declarations: vec![Declaration::Enum {
-            id: "demo.lifecycle/Event".to_owned(),
-            namespace: "demo.lifecycle".to_owned(),
-            name: "Event".to_owned(),
-            type_parameters: vec![],
-            variants: vec![calcit_bindgen::EnumVariant {
-                name: "message".to_owned(),
-                payload: vec![Type::String],
-            }],
-        }],
-        definitions: vec![
-            Definition {
-                id: "demo.lifecycle/serve".to_owned(),
-                namespace: "demo.lifecycle".to_owned(),
-                name: "serve".to_owned(),
-                doc: String::new(),
-                logical_schema: String::new(),
-                signature: None,
-                lowering: Lowering {
-                    backend: Some("native".to_owned()),
-                    target: None,
-                    kind: Some("async-stream".to_owned()),
-                    symbol: Some("serve".to_owned()),
-                    invoke: Some("async".to_owned()),
-                    transport: Some("async-task-v1".to_owned()),
-                    stream: Some(StreamLowering {
-                        callback_parameter: 1,
-                        event_type: Type::Enum {
-                            id: "demo.lifecycle/Event".to_owned(),
-                            arguments: vec![],
-                        },
-                        callback_result: Type::Unit,
-                        cancel: "cooperative".to_owned(),
-                        task_result: Ownership::Own,
-                    }),
-                    resource: None,
-                    raw: String::new(),
-                },
-                status: DefinitionStatus::Unsupported,
-                diagnostic_codes: vec!["E_FFI_IR_UNSUPPORTED_TYPE".to_owned()],
-            },
-            Definition {
-                id: "demo.lifecycle/compile".to_owned(),
-                namespace: "demo.lifecycle".to_owned(),
-                name: "compile".to_owned(),
-                doc: String::new(),
-                logical_schema: String::new(),
-                signature: None,
-                lowering: Lowering {
-                    backend: Some("native".to_owned()),
-                    target: None,
-                    kind: Some("resource-constructor".to_owned()),
-                    symbol: Some("compile".to_owned()),
-                    invoke: Some("sync".to_owned()),
-                    transport: Some("edn-buffer-v1".to_owned()),
-                    stream: None,
-                    resource: Some(ResourceLowering {
-                        protocol: "opaque-resource-v1".to_owned(),
-                        result: Some(Ownership::Own),
-                        parameters: vec![],
-                    }),
-                    raw: String::new(),
-                },
-                status: DefinitionStatus::Unsupported,
-                diagnostic_codes: vec!["E_FFI_IR_UNSUPPORTED_TYPE".to_owned()],
-            },
-            Definition {
-                id: "demo.lifecycle/source".to_owned(),
-                namespace: "demo.lifecycle".to_owned(),
-                name: "source".to_owned(),
-                doc: String::new(),
-                logical_schema: String::new(),
-                signature: None,
-                lowering: Lowering {
-                    backend: Some("native".to_owned()),
-                    target: None,
-                    kind: Some("resource-method".to_owned()),
-                    symbol: Some("source".to_owned()),
-                    invoke: Some("sync".to_owned()),
-                    transport: Some("edn-buffer-v1".to_owned()),
-                    stream: None,
-                    resource: Some(ResourceLowering {
-                        protocol: "opaque-resource-v1".to_owned(),
-                        result: None,
-                        parameters: vec![ResourceParameterOwnership {
-                            position: 0,
-                            ownership: Ownership::Borrow,
-                        }],
-                    }),
-                    raw: String::new(),
-                },
-                status: DefinitionStatus::Unsupported,
-                diagnostic_codes: vec!["E_FFI_IR_UNSUPPORTED_TYPE".to_owned()],
-            },
-        ],
-    }
-}
-
 #[test]
 fn validates_a_monomorphic_composite_contract() {
     validate_document(&document()).expect("valid v2 document");
-}
-
-#[test]
-fn v2_serialization_omits_absent_lifecycle_fields() {
-    let encoded = serde_json::to_string(&document()).expect("serialize v2 document");
-    assert!(!encoded.contains("\"stream\""));
-    assert!(!encoded.contains("\"resource\""));
-}
-
-#[test]
-fn validates_v3_lifecycle_contracts_without_enabling_generation() {
-    let lifecycle = lifecycle_document();
-    validate_document(&lifecycle).expect("valid lifecycle v3 document");
-    let encoded = serde_json::to_string(&lifecycle).expect("serialize lifecycle v3 document");
-    assert!(encoded.contains("\"event\""));
-    let decoded: Document =
-        serde_json::from_str(&encoded).expect("deserialize lifecycle v3 document");
-    assert_eq!(decoded, lifecycle);
-
-    let mut v2 = lifecycle_document();
-    v2.version = 2;
-    assert!(
-        validate_document(&v2)
-            .expect_err("v2 cannot contain lifecycle fields")
-            .contains("requires Interface IR v3")
-    );
-
-    let mut invalid_stream = lifecycle_document();
-    invalid_stream.definitions[0]
-        .lowering
-        .stream
-        .as_mut()
-        .expect("stream")
-        .cancel = "best-effort".to_owned();
-    assert!(
-        validate_document(&invalid_stream)
-            .expect_err("cancel mode must be precise")
-            .contains("must be cooperative")
-    );
-
-    let mut invalid_resource = lifecycle_document();
-    invalid_resource.definitions[2]
-        .lowering
-        .resource
-        .as_mut()
-        .expect("resource")
-        .parameters[0]
-        .ownership = Ownership::Own;
-    assert!(
-        validate_document(&invalid_resource)
-            .expect_err("input ownership must not imply an unspecified consume")
-            .contains("cannot be own")
-    );
-
-    let mut invalid_stream_parameter = lifecycle_document();
-    invalid_stream_parameter.definitions[0].signature = Some(FunctionSignature {
-        parameters: vec![Parameter {
-            position: 3,
-            type_ir: Type::String,
-        }],
-        result: Type::Unit,
-    });
-    assert!(
-        validate_document(&invalid_stream_parameter)
-            .expect_err("callback must name a declared parameter position")
-            .contains("does not reference a declared parameter position")
-    );
-
-    let mut invalid_resource_parameter = lifecycle_document();
-    invalid_resource_parameter.definitions[2].signature = Some(FunctionSignature {
-        parameters: vec![Parameter {
-            position: 3,
-            type_ir: Type::String,
-        }],
-        result: Type::String,
-    });
-    assert!(
-        validate_document(&invalid_resource_parameter)
-            .expect_err("resource ownership must name a declared parameter position")
-            .contains("does not reference a declared parameter position")
-    );
-
-    let mut prematurely_supported = lifecycle_document();
-    prematurely_supported.definitions[0].status = DefinitionStatus::Supported;
-    prematurely_supported.definitions[0].signature = Some(FunctionSignature {
-        parameters: vec![],
-        result: Type::Unit,
-    });
-    prematurely_supported.definitions[0]
-        .diagnostic_codes
-        .clear();
-    assert!(
-        validate_document(&prematurely_supported)
-            .expect_err("lifecycle metadata must not claim generated support yet")
-            .contains("must remain unsupported")
-    );
 }
 
 #[test]
@@ -311,26 +109,6 @@ fn compatibility_diff_ignores_non_contract_metadata() {
     let report = compare(&old, &new);
     assert!(report.compatible);
     assert!(report.changes.is_empty());
-}
-
-#[test]
-fn compatibility_diff_treats_lifecycle_changes_as_breaking_before_generation_exists() {
-    let old = lifecycle_document();
-    let mut new = old.clone();
-    new.definitions[0]
-        .lowering
-        .stream
-        .as_mut()
-        .expect("stream")
-        .cancel = "manual".to_owned();
-    let report = compare(&old, &new);
-    assert!(!report.compatible);
-    assert_eq!(report.changes.len(), 1);
-    assert_eq!(report.changes[0].kind, ChangeKind::Breaking);
-    assert_eq!(
-        report.changes[0].path,
-        "definitions.demo.lifecycle/serve.lowering.stream"
-    );
 }
 
 #[test]
