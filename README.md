@@ -27,6 +27,10 @@ Interface IR。当前第一段实现提供 v2 envelope/document 校验和兼容�
 未知版本、缺失 declaration、错误 nominal kind/arity、非 monomorphic callable 在
 进入生成器前失败。
 
+输入为 `calcit ffi export --json` envelope 时，还会校验 envelope schema ID、依赖
+过滤条件、summary 计数、完整结构化 diagnostics 与 core 生成的 revision digest。
+裸 Interface IR v2 document 仍是受支持输入，但 envelope metadata 不再被静默丢弃。
+
 ```bash
 calcit project/calcit.cirru ffi export --json > interface.json
 cargo run -- validate interface.json
@@ -102,6 +106,11 @@ Interface IR emitted by `calcit ffi export --json`. The initial slice validates
 v2 envelopes/documents and reports compatibility changes before generation.
 Unknown versions, missing declarations, nominal kind/arity mismatches, and
 non-monomorphic callables fail explicitly.
+
+For a `calcit ffi export --json` envelope, validation also checks the envelope
+schema ID, dependency filter, summary counts, complete structured diagnostics,
+and the core-produced revision digest. Raw Interface IR v2 documents remain a
+supported input, but envelope metadata is never silently discarded.
 
 `diff` classifies added definitions/declarations as additive. Removing or
 changing an existing contract is breaking and exits non-zero, making the

@@ -1,6 +1,6 @@
 use calcit_bindgen::{
     ChangeKind, Declaration, Definition, DefinitionStatus, Document, FunctionSignature, Lowering,
-    Parameter, StructField, Type, compare, validate_document,
+    Parameter, StructField, Type, compare, load_document, validate_document,
 };
 use std::fs;
 use std::process::Command;
@@ -51,6 +51,91 @@ fn document() -> Document {
 #[test]
 fn validates_a_monomorphic_composite_contract() {
     validate_document(&document()).expect("valid v2 document");
+}
+
+fn load_json(value: &serde_json::Value) -> Result<Document, String> {
+    let file = tempfile::NamedTempFile::new().expect("temporary Interface IR");
+    fs::write(
+        file.path(),
+        serde_json::to_vec_pretty(value).expect("encode Interface IR fixture"),
+    )
+    .expect("write Interface IR fixture");
+    load_document(file.path())
+}
+
+fn export_envelope(document: &Document) -> serde_json::Value {
+    let diagnostics: Vec<serde_json::Value> = vec![];
+    let revision_payload =
+        serde_json::to_vec(&(document, &diagnostics)).expect("encode revision input");
+    serde_json::json!({
+        "schema_version": 1,
+        "interface_schema": "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json",
+        "command": "ffi.export",
+        "revision": format!("md5:{:x}", md5::compute(revision_payload)),
+        "data": {
+            "filters": {
+                "namespace": null,
+                "include_dependencies": false,
+            },
+            "interface": document,
+            "summary": {
+                "definitions": document.definitions.len(),
+                "supported": document.definitions.len(),
+                "unsupported": 0,
+                "diagnostics": 0,
+            },
+        },
+        "diagnostics": diagnostics,
+    })
+}
+
+#[test]
+fn validates_the_complete_ffi_export_envelope_contract() {
+    let envelope = export_envelope(&document());
+    assert_eq!(
+        load_json(&envelope).expect("valid export envelope"),
+        document()
+    );
+
+    let mut wrong_schema = envelope.clone();
+    wrong_schema["interface_schema"] = serde_json::json!("https://example.test/other.json");
+    assert!(
+        load_json(&wrong_schema)
+            .unwrap_err()
+            .contains("expected Interface IR schema")
+    );
+
+    let mut wrong_summary = envelope.clone();
+    wrong_summary["data"]["summary"]["definitions"] = serde_json::json!(2);
+    assert!(
+        load_json(&wrong_summary)
+            .unwrap_err()
+            .contains("summary does not match")
+    );
+
+    let mut wrong_revision = envelope.clone();
+    wrong_revision["revision"] = serde_json::json!("md5:00000000000000000000000000000000");
+    assert!(
+        load_json(&wrong_revision)
+            .unwrap_err()
+            .contains("revision mismatch")
+    );
+
+    let mut dependencies = envelope.clone();
+    dependencies["data"]["filters"]["include_dependencies"] = serde_json::json!(true);
+    assert!(
+        load_json(&dependencies)
+            .unwrap_err()
+            .contains("must not include dependency")
+    );
+
+    let mut unknown_field = envelope;
+    unknown_field["future_contract"] = serde_json::json!(true);
+    assert!(
+        load_json(&unknown_field)
+            .unwrap_err()
+            .contains("unknown field")
+    );
 }
 
 #[test]

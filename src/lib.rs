@@ -18,7 +18,7 @@ pub use generate::{
     generate_directory, generate_directory_with_backends,
 };
 pub use model::{
-    Declaration, Definition, DefinitionStatus, Document, EnumVariant, Envelope, FunctionSignature,
-    Lowering, Parameter, StructField, Type,
+    Declaration, Definition, DefinitionStatus, Document, EnumVariant, Envelope, ExportFilters,
+    ExportSummary, FunctionSignature, InterfaceDiagnostic, Lowering, Parameter, StructField, Type,
 };
 pub use validate::{load_document, validate_document};

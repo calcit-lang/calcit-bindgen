@@ -4,6 +4,9 @@ use std::path::Path;
 
 use crate::{Declaration, DefinitionStatus, Document, Envelope, Type};
 
+const FFI_INTERFACE_IR_V2_SCHEMA_ID: &str =
+    "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json";
+
 pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     let path = path.as_ref();
     let source = fs::read_to_string(path)
@@ -13,12 +16,7 @@ pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     let document = if value.get("command").is_some() {
         let envelope: Envelope = serde_json::from_value(value)
             .map_err(|error| format!("invalid ffi.export envelope: {error}"))?;
-        if envelope.schema_version != 1 || envelope.command != "ffi.export" {
-            return Err(format!(
-                "expected ffi.export envelope schema v1, received command {:?} schema v{}",
-                envelope.command, envelope.schema_version
-            ));
-        }
+        validate_export_envelope(&envelope)?;
         envelope.data.interface
     } else {
         serde_json::from_value(value)
@@ -26,6 +24,58 @@ pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     };
     validate_document(&document)?;
     Ok(document)
+}
+
+fn validate_export_envelope(envelope: &Envelope) -> Result<(), String> {
+    if envelope.schema_version != 1 || envelope.command != "ffi.export" {
+        return Err(format!(
+            "expected ffi.export envelope schema v1, received command {:?} schema v{}",
+            envelope.command, envelope.schema_version
+        ));
+    }
+    if envelope.interface_schema != FFI_INTERFACE_IR_V2_SCHEMA_ID {
+        return Err(format!(
+            "expected Interface IR schema {FFI_INTERFACE_IR_V2_SCHEMA_ID:?}, received {:?}",
+            envelope.interface_schema
+        ));
+    }
+    if envelope.data.filters.include_dependencies {
+        return Err("ffi.export v1 must not include dependency definitions".to_owned());
+    }
+
+    let supported = envelope
+        .data
+        .interface
+        .definitions
+        .iter()
+        .filter(|definition| definition.status == DefinitionStatus::Supported)
+        .count();
+    let definitions = envelope.data.interface.definitions.len();
+    let unsupported = definitions - supported;
+    let summary = &envelope.data.summary;
+    if summary.definitions != definitions
+        || summary.supported != supported
+        || summary.unsupported != unsupported
+        || summary.diagnostics != envelope.diagnostics.len()
+    {
+        return Err(format!(
+            "ffi.export summary does not match the embedded interface and diagnostics: expected definitions={definitions}, supported={supported}, unsupported={unsupported}, diagnostics={}",
+            envelope.diagnostics.len()
+        ));
+    }
+
+    let revision_payload =
+        serde_json::to_vec(&(&envelope.data.interface, &envelope.diagnostics))
+            .map_err(|error| format!("failed to encode ffi.export revision input: {error}"))?;
+    let expected_revision = format!("md5:{:x}", md5::compute(revision_payload));
+    if envelope.revision != expected_revision {
+        return Err(format!(
+            "ffi.export revision mismatch: expected {expected_revision}, received {}",
+            envelope.revision
+        ));
+    }
+
+    Ok(())
 }
 
 pub fn validate_document(document: &Document) -> Result<(), String> {

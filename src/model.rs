@@ -1,15 +1,50 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Envelope {
     pub schema_version: u32,
+    pub interface_schema: String,
     pub command: String,
+    pub revision: String,
     pub data: EnvelopeData,
+    pub diagnostics: Vec<InterfaceDiagnostic>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EnvelopeData {
+    pub filters: ExportFilters,
     pub interface: Document,
+    pub summary: ExportSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportFilters {
+    pub namespace: Option<String>,
+    pub include_dependencies: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportSummary {
+    pub definitions: usize,
+    pub supported: usize,
+    pub unsupported: usize,
+    pub diagnostics: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterfaceDiagnostic {
+    pub code: String,
+    pub phase: String,
+    pub severity: String,
+    pub definition: String,
+    pub path: String,
+    pub message: String,
+    pub suggestion: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
