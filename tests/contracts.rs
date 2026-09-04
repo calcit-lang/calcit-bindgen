@@ -173,10 +173,37 @@ fn validates_the_complete_ffi_export_envelope_contract() {
         message: "test boundary is unsupported",
         suggestion: "keep it behind a handwritten adapter",
     };
-    let diagnostic_envelope = export_envelope(&unsupported, vec![diagnostic]);
+    let diagnostic_envelope = export_envelope(&unsupported, vec![diagnostic.clone()]);
     assert_eq!(
         load_json(&diagnostic_envelope).expect("valid envelope with a diagnostic"),
         unsupported
+    );
+
+    let missing_structured_diagnostic = export_envelope(&unsupported, vec![]);
+    assert!(
+        load_json(&missing_structured_diagnostic)
+            .unwrap_err()
+            .contains("without a structured diagnostic")
+    );
+
+    let unknown_definition = TestDiagnostic {
+        definition: "demo/missing",
+        ..diagnostic.clone()
+    };
+    assert!(
+        load_json(&export_envelope(&unsupported, vec![unknown_definition]))
+            .unwrap_err()
+            .contains("references unknown definition")
+    );
+
+    let unknown_code = TestDiagnostic {
+        code: "E_OTHER_BOUNDARY",
+        ..diagnostic.clone()
+    };
+    assert!(
+        load_json(&export_envelope(&unsupported, vec![unknown_code]))
+            .unwrap_err()
+            .contains("is not listed by definition")
     );
 
     let mut incomplete_diagnostic = diagnostic_envelope;

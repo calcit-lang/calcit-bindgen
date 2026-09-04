@@ -14,3 +14,8 @@
   line with the published schema's `additionalProperties: false` contract.
 - Cover both a complete non-empty diagnostic that participates in summary and
   revision validation, and a diagnostic missing a required field.
+- Cross-check every structured diagnostic definition/code pair against the
+  embedded definition inventory, and require every advertised diagnostic code
+  to have structured evidence.
+- Clarify that namespace is a required nullable v1 filter field and that loader
+  output is the embedded document after envelope metadata validation.

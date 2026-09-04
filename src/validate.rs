@@ -114,6 +114,44 @@ fn validate_export_envelope(envelope: &ExportEnvelope) -> Result<(), String> {
         ));
     }
 
+    let mut observed_diagnostic_codes = BTreeSet::new();
+    for diagnostic in &envelope.diagnostics {
+        let Some(definition) = envelope
+            .data
+            .interface
+            .definitions
+            .iter()
+            .find(|definition| definition.id == diagnostic.definition)
+        else {
+            return Err(format!(
+                "ffi.export diagnostic {} references unknown definition {}",
+                diagnostic.code, diagnostic.definition
+            ));
+        };
+        if !definition
+            .diagnostic_codes
+            .iter()
+            .any(|code| code == &diagnostic.code)
+        {
+            return Err(format!(
+                "ffi.export diagnostic {} is not listed by definition {}",
+                diagnostic.code, diagnostic.definition
+            ));
+        }
+        observed_diagnostic_codes
+            .insert((diagnostic.definition.as_str(), diagnostic.code.as_str()));
+    }
+    for definition in &envelope.data.interface.definitions {
+        for code in &definition.diagnostic_codes {
+            if !observed_diagnostic_codes.contains(&(definition.id.as_str(), code.as_str())) {
+                return Err(format!(
+                    "ffi.export definition {} lists diagnostic code {} without a structured diagnostic",
+                    definition.id, code
+                ));
+            }
+        }
+    }
+
     let revision_payload =
         serde_json::to_vec(&(&envelope.data.interface, &envelope.diagnostics))
             .map_err(|error| format!("failed to encode ffi.export revision input: {error}"))?;
