@@ -2,10 +2,60 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use crate::{Declaration, DefinitionStatus, Document, Envelope, Type};
+use serde::{Deserialize, Serialize};
+
+use crate::{Declaration, DefinitionStatus, Document, Type};
 
 const FFI_INTERFACE_IR_V2_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportEnvelope {
+    schema_version: u32,
+    interface_schema: String,
+    command: String,
+    revision: String,
+    data: ExportEnvelopeData,
+    diagnostics: Vec<ExportDiagnostic>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportEnvelopeData {
+    filters: ExportFilters,
+    interface: Document,
+    summary: ExportSummary,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportFilters {
+    #[allow(dead_code)]
+    namespace: Option<String>,
+    include_dependencies: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportSummary {
+    definitions: usize,
+    supported: usize,
+    unsupported: usize,
+    diagnostics: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportDiagnostic {
+    code: String,
+    phase: String,
+    severity: String,
+    definition: String,
+    path: String,
+    message: String,
+    suggestion: String,
+}
 
 pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     let path = path.as_ref();
@@ -14,7 +64,7 @@ pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     let value: serde_json::Value = serde_json::from_str(&source)
         .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
     let document = if value.get("command").is_some() {
-        let envelope: Envelope = serde_json::from_value(value)
+        let envelope: ExportEnvelope = serde_json::from_value(value)
             .map_err(|error| format!("invalid ffi.export envelope: {error}"))?;
         validate_export_envelope(&envelope)?;
         envelope.data.interface
@@ -26,7 +76,7 @@ pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     Ok(document)
 }
 
-fn validate_export_envelope(envelope: &Envelope) -> Result<(), String> {
+fn validate_export_envelope(envelope: &ExportEnvelope) -> Result<(), String> {
     if envelope.schema_version != 1 || envelope.command != "ffi.export" {
         return Err(format!(
             "expected ffi.export envelope schema v1, received command {:?} schema v{}",

@@ -63,10 +63,25 @@ fn load_json(value: &serde_json::Value) -> Result<Document, String> {
     load_document(file.path())
 }
 
-fn export_envelope(document: &Document) -> serde_json::Value {
-    let diagnostics: Vec<serde_json::Value> = vec![];
+#[derive(Clone, serde::Serialize)]
+struct TestDiagnostic {
+    code: &'static str,
+    phase: &'static str,
+    severity: &'static str,
+    definition: &'static str,
+    path: &'static str,
+    message: &'static str,
+    suggestion: &'static str,
+}
+
+fn export_envelope(document: &Document, diagnostics: Vec<TestDiagnostic>) -> serde_json::Value {
     let revision_payload =
         serde_json::to_vec(&(document, &diagnostics)).expect("encode revision input");
+    let supported = document
+        .definitions
+        .iter()
+        .filter(|definition| definition.status == DefinitionStatus::Supported)
+        .count();
     serde_json::json!({
         "schema_version": 1,
         "interface_schema": "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json",
@@ -80,9 +95,9 @@ fn export_envelope(document: &Document) -> serde_json::Value {
             "interface": document,
             "summary": {
                 "definitions": document.definitions.len(),
-                "supported": document.definitions.len(),
-                "unsupported": 0,
-                "diagnostics": 0,
+                "supported": supported,
+                "unsupported": document.definitions.len() - supported,
+                "diagnostics": diagnostics.len(),
             },
         },
         "diagnostics": diagnostics,
@@ -91,7 +106,7 @@ fn export_envelope(document: &Document) -> serde_json::Value {
 
 #[test]
 fn validates_the_complete_ffi_export_envelope_contract() {
-    let envelope = export_envelope(&document());
+    let envelope = export_envelope(&document(), vec![]);
     assert_eq!(
         load_json(&envelope).expect("valid export envelope"),
         document()
@@ -143,6 +158,36 @@ fn validates_the_complete_ffi_export_envelope_contract() {
         load_json(&raw_unknown_field)
             .unwrap_err()
             .contains("unknown field")
+    );
+
+    let mut unsupported = document();
+    unsupported.definitions[0].status = DefinitionStatus::Unsupported;
+    unsupported.definitions[0].signature = None;
+    unsupported.definitions[0].diagnostic_codes = vec!["E_TEST_BOUNDARY".to_owned()];
+    let diagnostic = TestDiagnostic {
+        code: "E_TEST_BOUNDARY",
+        phase: "ffi-interface-ir",
+        severity: "error",
+        definition: "demo/read",
+        path: "signature.result",
+        message: "test boundary is unsupported",
+        suggestion: "keep it behind a handwritten adapter",
+    };
+    let diagnostic_envelope = export_envelope(&unsupported, vec![diagnostic]);
+    assert_eq!(
+        load_json(&diagnostic_envelope).expect("valid envelope with a diagnostic"),
+        unsupported
+    );
+
+    let mut incomplete_diagnostic = diagnostic_envelope;
+    incomplete_diagnostic["diagnostics"][0]
+        .as_object_mut()
+        .expect("diagnostic object")
+        .remove("suggestion");
+    assert!(
+        load_json(&incomplete_diagnostic)
+            .unwrap_err()
+            .contains("missing field `suggestion`")
     );
 }
 
