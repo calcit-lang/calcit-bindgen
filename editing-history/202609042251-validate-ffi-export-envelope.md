@@ -7,4 +7,6 @@
 - Keep raw Interface IR v2 documents supported for existing generated fixtures
   and downstream tools.
 - Reject unknown v1 envelope fields so schema evolution requires an explicit
-  consumer update instead of being silently accepted.
+  consumer update instead of being silently accepted. Apply the same
+  fail-closed rule to raw v2 documents and every nested structured IR node, in
+  line with the published schema's `additionalProperties: false` contract.

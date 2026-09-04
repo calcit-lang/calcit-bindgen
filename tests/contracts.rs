@@ -136,6 +136,14 @@ fn validates_the_complete_ffi_export_envelope_contract() {
             .unwrap_err()
             .contains("unknown field")
     );
+
+    let mut raw_unknown_field = serde_json::to_value(document()).expect("encode raw document");
+    raw_unknown_field["definitions"][0]["signature"]["future_contract"] = serde_json::json!(true);
+    assert!(
+        load_json(&raw_unknown_field)
+            .unwrap_err()
+            .contains("unknown field")
+    );
 }
 
 #[test]
