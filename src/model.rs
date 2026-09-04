@@ -13,6 +13,7 @@ pub struct EnvelopeData {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Document {
     pub version: u32,
     pub package: String,
@@ -22,7 +23,7 @@ pub struct Document {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Declaration {
     Struct {
         id: String,
@@ -67,6 +68,7 @@ impl Declaration {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StructField {
     pub name: String,
     #[serde(rename = "type")]
@@ -74,12 +76,14 @@ pub struct StructField {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EnumVariant {
     pub name: String,
     pub payload: Vec<Type>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Definition {
     pub id: String,
     pub namespace: String,
@@ -100,12 +104,14 @@ pub enum DefinitionStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FunctionSignature {
     pub parameters: Vec<Parameter>,
     pub result: Type,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Parameter {
     pub position: usize,
     #[serde(rename = "type")]
@@ -113,7 +119,7 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Type {
     Unit,
     Bool,
@@ -129,6 +135,7 @@ pub enum Type {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Lowering {
     pub backend: Option<String>,
     pub target: Option<String>,

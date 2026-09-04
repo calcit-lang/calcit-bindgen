@@ -1,6 +1,6 @@
 use calcit_bindgen::{
     ChangeKind, Declaration, Definition, DefinitionStatus, Document, FunctionSignature, Lowering,
-    Parameter, StructField, Type, compare, validate_document,
+    Parameter, StructField, Type, compare, load_document, validate_document,
 };
 use std::fs;
 use std::process::Command;
@@ -51,6 +51,171 @@ fn document() -> Document {
 #[test]
 fn validates_a_monomorphic_composite_contract() {
     validate_document(&document()).expect("valid v2 document");
+}
+
+fn load_json(value: &serde_json::Value) -> Result<Document, String> {
+    let file = tempfile::NamedTempFile::new().expect("temporary Interface IR");
+    fs::write(
+        file.path(),
+        serde_json::to_vec_pretty(value).expect("encode Interface IR fixture"),
+    )
+    .expect("write Interface IR fixture");
+    load_document(file.path())
+}
+
+#[derive(Clone, serde::Serialize)]
+struct TestDiagnostic {
+    code: &'static str,
+    phase: &'static str,
+    severity: &'static str,
+    definition: &'static str,
+    path: &'static str,
+    message: &'static str,
+    suggestion: &'static str,
+}
+
+fn export_envelope(document: &Document, diagnostics: Vec<TestDiagnostic>) -> serde_json::Value {
+    let revision_payload =
+        serde_json::to_vec(&(document, &diagnostics)).expect("encode revision input");
+    let supported = document
+        .definitions
+        .iter()
+        .filter(|definition| definition.status == DefinitionStatus::Supported)
+        .count();
+    serde_json::json!({
+        "schema_version": 1,
+        "interface_schema": "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json",
+        "command": "ffi.export",
+        "revision": format!("md5:{:x}", md5::compute(revision_payload)),
+        "data": {
+            "filters": {
+                "namespace": null,
+                "include_dependencies": false,
+            },
+            "interface": document,
+            "summary": {
+                "definitions": document.definitions.len(),
+                "supported": supported,
+                "unsupported": document.definitions.len() - supported,
+                "diagnostics": diagnostics.len(),
+            },
+        },
+        "diagnostics": diagnostics,
+    })
+}
+
+#[test]
+fn validates_the_complete_ffi_export_envelope_contract() {
+    let envelope = export_envelope(&document(), vec![]);
+    assert_eq!(
+        load_json(&envelope).expect("valid export envelope"),
+        document()
+    );
+
+    let mut wrong_schema = envelope.clone();
+    wrong_schema["interface_schema"] = serde_json::json!("https://example.test/other.json");
+    assert!(
+        load_json(&wrong_schema)
+            .unwrap_err()
+            .contains("expected Interface IR schema")
+    );
+
+    let mut wrong_summary = envelope.clone();
+    wrong_summary["data"]["summary"]["definitions"] = serde_json::json!(2);
+    assert!(
+        load_json(&wrong_summary)
+            .unwrap_err()
+            .contains("summary does not match")
+    );
+
+    let mut wrong_revision = envelope.clone();
+    wrong_revision["revision"] = serde_json::json!("md5:00000000000000000000000000000000");
+    assert!(
+        load_json(&wrong_revision)
+            .unwrap_err()
+            .contains("revision mismatch")
+    );
+
+    let mut dependencies = envelope.clone();
+    dependencies["data"]["filters"]["include_dependencies"] = serde_json::json!(true);
+    assert!(
+        load_json(&dependencies)
+            .unwrap_err()
+            .contains("must not include dependency")
+    );
+
+    let mut unknown_field = envelope;
+    unknown_field["future_contract"] = serde_json::json!(true);
+    assert!(
+        load_json(&unknown_field)
+            .unwrap_err()
+            .contains("unknown field")
+    );
+
+    let mut raw_unknown_field = serde_json::to_value(document()).expect("encode raw document");
+    raw_unknown_field["definitions"][0]["signature"]["future_contract"] = serde_json::json!(true);
+    assert!(
+        load_json(&raw_unknown_field)
+            .unwrap_err()
+            .contains("unknown field")
+    );
+
+    let mut unsupported = document();
+    unsupported.definitions[0].status = DefinitionStatus::Unsupported;
+    unsupported.definitions[0].signature = None;
+    unsupported.definitions[0].diagnostic_codes = vec!["E_TEST_BOUNDARY".to_owned()];
+    let diagnostic = TestDiagnostic {
+        code: "E_TEST_BOUNDARY",
+        phase: "ffi-interface-ir",
+        severity: "error",
+        definition: "demo/read",
+        path: "signature.result",
+        message: "test boundary is unsupported",
+        suggestion: "keep it behind a handwritten adapter",
+    };
+    let diagnostic_envelope = export_envelope(&unsupported, vec![diagnostic.clone()]);
+    assert_eq!(
+        load_json(&diagnostic_envelope).expect("valid envelope with a diagnostic"),
+        unsupported
+    );
+
+    let missing_structured_diagnostic = export_envelope(&unsupported, vec![]);
+    assert!(
+        load_json(&missing_structured_diagnostic)
+            .unwrap_err()
+            .contains("without a structured diagnostic")
+    );
+
+    let unknown_definition = TestDiagnostic {
+        definition: "demo/missing",
+        ..diagnostic.clone()
+    };
+    assert!(
+        load_json(&export_envelope(&unsupported, vec![unknown_definition]))
+            .unwrap_err()
+            .contains("references unknown definition")
+    );
+
+    let unknown_code = TestDiagnostic {
+        code: "E_OTHER_BOUNDARY",
+        ..diagnostic.clone()
+    };
+    assert!(
+        load_json(&export_envelope(&unsupported, vec![unknown_code]))
+            .unwrap_err()
+            .contains("is not listed by definition")
+    );
+
+    let mut incomplete_diagnostic = diagnostic_envelope;
+    incomplete_diagnostic["diagnostics"][0]
+        .as_object_mut()
+        .expect("diagnostic object")
+        .remove("suggestion");
+    assert!(
+        load_json(&incomplete_diagnostic)
+            .unwrap_err()
+            .contains("missing field `suggestion`")
+    );
 }
 
 #[test]

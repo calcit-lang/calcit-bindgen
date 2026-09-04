@@ -2,7 +2,60 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use crate::{Declaration, DefinitionStatus, Document, Envelope, Type};
+use serde::{Deserialize, Serialize};
+
+use crate::{Declaration, DefinitionStatus, Document, Type};
+
+const FFI_INTERFACE_IR_V2_SCHEMA_ID: &str =
+    "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportEnvelope {
+    schema_version: u32,
+    interface_schema: String,
+    command: String,
+    revision: String,
+    data: ExportEnvelopeData,
+    diagnostics: Vec<ExportDiagnostic>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportEnvelopeData {
+    filters: ExportFilters,
+    interface: Document,
+    summary: ExportSummary,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportFilters {
+    #[allow(dead_code)]
+    namespace: Option<String>,
+    include_dependencies: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportSummary {
+    definitions: usize,
+    supported: usize,
+    unsupported: usize,
+    diagnostics: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportDiagnostic {
+    code: String,
+    phase: String,
+    severity: String,
+    definition: String,
+    path: String,
+    message: String,
+    suggestion: String,
+}
 
 pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     let path = path.as_ref();
@@ -11,14 +64,9 @@ pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     let value: serde_json::Value = serde_json::from_str(&source)
         .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
     let document = if value.get("command").is_some() {
-        let envelope: Envelope = serde_json::from_value(value)
+        let envelope: ExportEnvelope = serde_json::from_value(value)
             .map_err(|error| format!("invalid ffi.export envelope: {error}"))?;
-        if envelope.schema_version != 1 || envelope.command != "ffi.export" {
-            return Err(format!(
-                "expected ffi.export envelope schema v1, received command {:?} schema v{}",
-                envelope.command, envelope.schema_version
-            ));
-        }
+        validate_export_envelope(&envelope)?;
         envelope.data.interface
     } else {
         serde_json::from_value(value)
@@ -26,6 +74,96 @@ pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     };
     validate_document(&document)?;
     Ok(document)
+}
+
+fn validate_export_envelope(envelope: &ExportEnvelope) -> Result<(), String> {
+    if envelope.schema_version != 1 || envelope.command != "ffi.export" {
+        return Err(format!(
+            "expected ffi.export envelope schema v1, received command {:?} schema v{}",
+            envelope.command, envelope.schema_version
+        ));
+    }
+    if envelope.interface_schema != FFI_INTERFACE_IR_V2_SCHEMA_ID {
+        return Err(format!(
+            "expected Interface IR schema {FFI_INTERFACE_IR_V2_SCHEMA_ID:?}, received {:?}",
+            envelope.interface_schema
+        ));
+    }
+    if envelope.data.filters.include_dependencies {
+        return Err("ffi.export v1 must not include dependency definitions".to_owned());
+    }
+
+    let supported = envelope
+        .data
+        .interface
+        .definitions
+        .iter()
+        .filter(|definition| definition.status == DefinitionStatus::Supported)
+        .count();
+    let definitions = envelope.data.interface.definitions.len();
+    let unsupported = definitions - supported;
+    let summary = &envelope.data.summary;
+    if summary.definitions != definitions
+        || summary.supported != supported
+        || summary.unsupported != unsupported
+        || summary.diagnostics != envelope.diagnostics.len()
+    {
+        return Err(format!(
+            "ffi.export summary does not match the embedded interface and diagnostics: expected definitions={definitions}, supported={supported}, unsupported={unsupported}, diagnostics={}",
+            envelope.diagnostics.len()
+        ));
+    }
+
+    let mut observed_diagnostic_codes = BTreeSet::new();
+    for diagnostic in &envelope.diagnostics {
+        let Some(definition) = envelope
+            .data
+            .interface
+            .definitions
+            .iter()
+            .find(|definition| definition.id == diagnostic.definition)
+        else {
+            return Err(format!(
+                "ffi.export diagnostic {} references unknown definition {}",
+                diagnostic.code, diagnostic.definition
+            ));
+        };
+        if !definition
+            .diagnostic_codes
+            .iter()
+            .any(|code| code == &diagnostic.code)
+        {
+            return Err(format!(
+                "ffi.export diagnostic {} is not listed by definition {}",
+                diagnostic.code, diagnostic.definition
+            ));
+        }
+        observed_diagnostic_codes
+            .insert((diagnostic.definition.as_str(), diagnostic.code.as_str()));
+    }
+    for definition in &envelope.data.interface.definitions {
+        for code in &definition.diagnostic_codes {
+            if !observed_diagnostic_codes.contains(&(definition.id.as_str(), code.as_str())) {
+                return Err(format!(
+                    "ffi.export definition {} lists diagnostic code {} without a structured diagnostic",
+                    definition.id, code
+                ));
+            }
+        }
+    }
+
+    let revision_payload =
+        serde_json::to_vec(&(&envelope.data.interface, &envelope.diagnostics))
+            .map_err(|error| format!("failed to encode ffi.export revision input: {error}"))?;
+    let expected_revision = format!("md5:{:x}", md5::compute(revision_payload));
+    if envelope.revision != expected_revision {
+        return Err(format!(
+            "ffi.export revision mismatch: expected {expected_revision}, received {}",
+            envelope.revision
+        ));
+    }
+
+    Ok(())
 }
 
 pub fn validate_document(document: &Document) -> Result<(), String> {
