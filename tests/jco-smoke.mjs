@@ -19,7 +19,7 @@ if (api.callHostAddOne(40) !== 42) throw new Error("jco callHostAddOne smoke fai
 if (api.boolNot(true) !== false || api.boolNot(false) !== true) {
   throw new Error("jco boolNot smoke failed");
 }
-if (api.callHostBoolNot(true) !== false) {
+if (api.callHostBoolNot(true) !== false || api.callHostBoolNot(false) !== true) {
   throw new Error("jco callHostBoolNot smoke failed");
 }
 if (api.chooseNumber(true, 3, 4) !== 3 || api.chooseNumber(false, 3, 4) !== 4) {

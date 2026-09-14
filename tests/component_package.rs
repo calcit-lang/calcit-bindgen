@@ -207,7 +207,16 @@ fn package_check_and_run(
     );
     call_host_bool
         .post_return(&mut store)
-        .expect("finish host bool call");
+        .expect("finish host bool true call");
+    assert_eq!(
+        call_host_bool
+            .call(&mut store, (false,))
+            .expect("call host bool-not with false"),
+        (true,)
+    );
+    call_host_bool
+        .post_return(&mut store)
+        .expect("finish host bool false call");
 
     let choose_number = instance
         .get_typed_func::<(bool, f64, f64), (f64,)>(&mut store, "choose-number")
