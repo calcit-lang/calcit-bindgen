@@ -1,6 +1,6 @@
 {} (:command |ffi.export)
   :interface-schema |https://calcit-lang.org/schemas/component-interface-ir-v1.schema.json
-  :revision |md5:ad68df922602dd0f57abb0fc8937991f
+  :revision |md5:1faa5380579098a2d0660ca73f4dd529
   :schema-version 1
   :data $ {}
     :filters $ {} (:boundary |component) (:include-dependencies false) (:namespace nil)
@@ -79,6 +79,20 @@
             :parameters $ [] $ {} (:position 0)
               :type $ {} $ :kind |string
             :result $ {} $ :kind |string
+        {} (:direction |export) (:doc |) (:id |component-wasm.main/call-host-numbers)
+          :logical-schema "|(:: 'Fn ({} (:args ([] (:: 'List 'Number))) (:return (:: 'List 'Number))))"
+          :module nil
+          :name |call-host-numbers
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |call-host-numbers
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:kind |list)
+                :item $ {} $ :kind |number
+            :result $ {} (:kind |list)
+              :item $ {} $ :kind |number
         {} (:direction |export) (:doc |) (:id |component-wasm.main/choose-buffer)
           :logical-schema "|(:: 'Fn ({} (:args ([] 'Bool 'Buffer 'Buffer)) (:return 'Buffer)))"
           :module nil
@@ -113,6 +127,20 @@
               {} (:position 2)
                 :type $ {} $ :kind |number
             :result $ {} $ :kind |number
+        {} (:direction |export) (:doc |) (:id |component-wasm.main/echo-bools)
+          :logical-schema "|(:: 'Fn ({} (:args ([] (:: 'List 'Bool))) (:return (:: 'List 'Bool))))"
+          :module nil
+          :name |echo-bools
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |echo-bools
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:kind |list)
+                :item $ {} $ :kind |bool
+            :result $ {} (:kind |list)
+              :item $ {} $ :kind |bool
         {} (:direction |export) (:doc |) (:id |component-wasm.main/echo-buffer)
           :logical-schema "|(:: 'Fn ({} (:args ([] 'Buffer)) (:return 'Buffer)))"
           :module nil
@@ -125,6 +153,50 @@
             :parameters $ [] $ {} (:position 0)
               :type $ {} $ :kind |buffer
             :result $ {} $ :kind |buffer
+        {} (:direction |export) (:doc |) (:id |component-wasm.main/echo-buffers)
+          :logical-schema "|(:: 'Fn ({} (:args ([] (:: 'List 'Buffer))) (:return (:: 'List 'Buffer))))"
+          :module nil
+          :name |echo-buffers
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |echo-buffers
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:kind |list)
+                :item $ {} $ :kind |buffer
+            :result $ {} (:kind |list)
+              :item $ {} $ :kind |buffer
+        {} (:direction |export) (:doc |) (:id |component-wasm.main/echo-number-lists)
+          :logical-schema "|(:: 'Fn ({} (:args ([] (:: 'List (:: 'List 'Number)))) (:return (:: 'List (:: 'List 'Number)))))"
+          :module nil
+          :name |echo-number-lists
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |echo-number-lists
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:kind |list)
+                :item $ {} (:kind |list)
+                  :item $ {} $ :kind |number
+            :result $ {} (:kind |list)
+              :item $ {} (:kind |list)
+                :item $ {} $ :kind |number
+        {} (:direction |export) (:doc |) (:id |component-wasm.main/echo-numbers)
+          :logical-schema "|(:: 'Fn ({} (:args ([] (:: 'List 'Number))) (:return (:: 'List 'Number))))"
+          :module nil
+          :name |echo-numbers
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |echo-numbers
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:kind |list)
+                :item $ {} $ :kind |number
+            :result $ {} (:kind |list)
+              :item $ {} $ :kind |number
         {} (:direction |export) (:doc |) (:id |component-wasm.main/echo-text)
           :logical-schema "|(:: 'Fn ({} (:args ([] 'String)) (:return 'String)))"
           :module nil
@@ -137,6 +209,20 @@
             :parameters $ [] $ {} (:position 0)
               :type $ {} $ :kind |string
             :result $ {} $ :kind |string
+        {} (:direction |export) (:doc |) (:id |component-wasm.main/echo-texts)
+          :logical-schema "|(:: 'Fn ({} (:args ([] (:: 'List 'String))) (:return (:: 'List 'String))))"
+          :module nil
+          :name |echo-texts
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |echo-texts
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:kind |list)
+                :item $ {} $ :kind |string
+            :result $ {} (:kind |list)
+              :item $ {} $ :kind |string
         {} (:direction |import) (:doc |) (:id |component-wasm.main/host-add-one)
           :logical-schema "|(:: 'Fn ({} (:args ([] 'Number)) (:return 'Number)))"
           :module |host
@@ -185,6 +271,20 @@
             :parameters $ [] $ {} (:position 0)
               :type $ {} $ :kind |string
             :result $ {} $ :kind |string
+        {} (:direction |import) (:doc |) (:id |component-wasm.main/host-numbers)
+          :logical-schema "|(:: 'Fn ({} (:args ([] (:: 'List 'Number))) (:return (:: 'List 'Number))))"
+          :module |host
+          :name |host-numbers
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |numbers
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:kind |list)
+                :item $ {} $ :kind |number
+            :result $ {} (:kind |list)
+              :item $ {} $ :kind |number
         {} (:direction |export) (:doc |) (:id |component-wasm.main/is-buffer)
           :logical-schema "|(:: 'Fn ({} (:args ([] 'Buffer)) (:return 'Bool)))"
           :module nil
@@ -197,5 +297,5 @@
             :parameters $ [] $ {} (:position 0)
               :type $ {} $ :kind |buffer
             :result $ {} $ :kind |bool
-    :summary $ {} (:definitions 15) (:diagnostics 0) (:supported 15) (:unsupported 0)
+    :summary $ {} (:definitions 22) (:diagnostics 0) (:supported 22) (:unsupported 0)
   :diagnostics $ []

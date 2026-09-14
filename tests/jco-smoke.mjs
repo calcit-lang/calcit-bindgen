@@ -12,6 +12,7 @@ const api = await instantiate(undefined, {
     boolNot: (value) => !value,
     buffer: (value) => Uint8Array.from(value).reverse(),
     echo: (value) => value,
+    numbers: (value) => Float64Array.from(value).reverse(),
   },
 });
 
@@ -47,4 +48,25 @@ if (api.chooseNumber(true, 3, 4) !== 3 || api.chooseNumber(false, 3, 4) !== 4) {
 if (api.echoText("Calcit") !== "Calcit") throw new Error("jco echoText smoke failed");
 if (api.callHostEcho("Agent") !== "Agent") throw new Error("jco callHostEcho smoke failed");
 
-console.log("jco Bool/Buffer/Number/String smoke passed");
+const expectList = (actual, expected, label) => {
+  const value = Array.from(actual);
+  if (JSON.stringify(value) !== JSON.stringify(expected)) {
+    throw new Error(`${label}: got ${JSON.stringify(value)}, expected ${JSON.stringify(expected)}`);
+  }
+};
+expectList(api.echoBools([true, false, true]), [true, false, true], "jco Bool List smoke failed");
+expectList(api.echoNumbers(Float64Array.of(1, -2.5, 7)), [1, -2.5, 7], "jco Number List smoke failed");
+expectList(api.callHostNumbers(Float64Array.of(1, -2.5, 7)), [7, -2.5, 1], "jco host Number List smoke failed");
+expectList(api.echoTexts(["alpha", "", "世界"]), ["alpha", "", "世界"], "jco String List smoke failed");
+const buffers = api.echoBuffers([Uint8Array.of(0, 255), Uint8Array.of(), Uint8Array.of(17, 0, 128)]);
+if (buffers.length !== 3) throw new Error(`jco Buffer List smoke returned ${buffers.length} items`);
+expectBytes(buffers[0], [0, 255], "jco Buffer List item 0 failed");
+expectBytes(buffers[1], [], "jco Buffer List item 1 failed");
+expectBytes(buffers[2], [17, 0, 128], "jco Buffer List item 2 failed");
+const nested = api.echoNumberLists([Float64Array.of(1, 2), Float64Array.of(), Float64Array.of(-3, 4.5, 7)]);
+if (nested.length !== 3) throw new Error(`jco nested Number List smoke returned ${nested.length} items`);
+expectList(nested[0], [1, 2], "jco nested Number List item 0 failed");
+expectList(nested[1], [], "jco nested Number List item 1 failed");
+expectList(nested[2], [-3, 4.5, 7], "jco nested Number List item 2 failed");
+
+console.log("jco recursive List and scalar smoke passed");

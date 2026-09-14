@@ -185,14 +185,18 @@ fn render_component_signature(
     Ok(format!("func({parameters}) -> {result}"))
 }
 
-fn render_component_type(type_ir: &Type, path: &str) -> Result<&'static str, String> {
+fn render_component_type(type_ir: &Type, path: &str) -> Result<String, String> {
     match type_ir {
-        Type::Bool => Ok("bool"),
-        Type::Buffer => Ok("list<u8>"),
-        Type::Number => Ok("f64"),
-        Type::String => Ok("string"),
+        Type::Bool => Ok("bool".to_owned()),
+        Type::Buffer => Ok("list<u8>".to_owned()),
+        Type::List { item } => Ok(format!(
+            "list<{}>",
+            render_component_type(item, &format!("{path}.item"))?
+        )),
+        Type::Number => Ok("f64".to_owned()),
+        Type::String => Ok("string".to_owned()),
         other => Err(format!(
-            "{path}: Component packaging currently supports only Bool, Buffer, Number, and String, received {other:?}"
+            "{path}: Component packaging currently supports only Bool, Buffer, recursive List<T>, Number, and String, received {other:?}"
         )),
     }
 }
@@ -347,5 +351,33 @@ fn render_type(type_ir: &Type, names: &WitNames, path: &str) -> Result<Option<St
         Type::TypeParameter { name } => Err(format!(
             "{path}: type parameter {name} is not representable in WIT"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_component_type;
+    use crate::Type;
+
+    #[test]
+    fn component_type_rendering_is_recursive_and_keeps_item_paths() {
+        let nested = Type::List {
+            item: Box::new(Type::List {
+                item: Box::new(Type::Number),
+            }),
+        };
+        assert_eq!(
+            render_component_type(&nested, "definitions.demo.signature.result"),
+            Ok("list<list<f64>>".to_owned())
+        );
+
+        let unsupported = Type::List {
+            item: Box::new(Type::List {
+                item: Box::new(Type::Unit),
+            }),
+        };
+        let error = render_component_type(&unsupported, "definitions.demo.signature.result")
+            .expect_err("nested Unit must not degrade to a Dynamic WIT type");
+        assert!(error.contains("definitions.demo.signature.result.item.item"));
     }
 }

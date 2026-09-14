@@ -24,6 +24,7 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
           (import "host" "bool-not" (func $host-bool-not (param i32) (result i32)))
           (import "host" "buffer" (func $host-buffer (param i32 i32 i32)))
           (import "host" "echo" (func $host-echo (param i32 i32 i32)))
+          (import "host" "numbers" (func $host-numbers (param i32 i32 i32)))
           (memory (export "memory") 1)
           (global $heap (mut i32) (i32.const 1024))
           (func (export "cabi_realloc")
@@ -31,6 +32,16 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
             (result i32)
             (local $result i32)
             global.get $heap
+            local.get $align
+            i32.const 1
+            i32.sub
+            i32.add
+            local.get $align
+            i32.const 1
+            i32.sub
+            i32.const -1
+            i32.xor
+            i32.and
             local.tee $result
             local.get $new-size
             i32.add
@@ -77,6 +88,25 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
             i32.const 8
             call $host-echo
             i32.const 8)
+          (func (export "call-host-numbers") (param $pointer i32) (param $length i32) (result i32)
+            local.get $pointer
+            local.get $length
+            i32.const 8
+            call $host-numbers
+            i32.const 8)
+          (func $echo-list (param $pointer i32) (param $length i32) (result i32)
+            i32.const 8
+            local.get $pointer
+            i32.store
+            i32.const 12
+            local.get $length
+            i32.store
+            i32.const 8)
+          (export "echo-bools" (func $echo-list))
+          (export "echo-buffers" (func $echo-list))
+          (export "echo-number-lists" (func $echo-list))
+          (export "echo-numbers" (func $echo-list))
+          (export "echo-texts" (func $echo-list))
           (func (export "choose-number")
             (param $flag i32) (param $yes f64) (param $no f64) (result f64)
             local.get $yes
@@ -129,7 +159,7 @@ fn component_contract() -> InterfaceContract {
 }
 
 #[test]
-fn packages_checks_and_runs_bool_buffer_number_and_string_component() {
+fn packages_checks_and_runs_recursive_list_and_scalar_component() {
     let temporary = TempDir::new().expect("temporary workspace");
     let output = package_check_and_run(&component_contract(), &core_module(), temporary.path());
 
@@ -140,7 +170,7 @@ fn packages_checks_and_runs_bool_buffer_number_and_string_component() {
 
 #[test]
 #[ignore = "requires a matching Calcit core checkout"]
-fn packages_and_runs_real_calcit_buffer_component() {
+fn packages_and_runs_real_calcit_list_component() {
     let contract_path = std::env::var("CALCIT_BINDGEN_REAL_CONTRACT")
         .expect("CALCIT_BINDGEN_REAL_CONTRACT must name the generated contract");
     let core_path = std::env::var("CALCIT_BINDGEN_REAL_CORE")
@@ -170,6 +200,10 @@ fn package_check_and_run(
     assert!(manifest.core_module_digest.is_some());
     assert!(output.join(WIT_BINDINGS_FILE).is_file());
     assert!(output.join(COMPONENT_FILE).is_file());
+    let wit =
+        fs::read_to_string(output.join(WIT_BINDINGS_FILE)).expect("read generated Component WIT");
+    assert!(wit.contains("echo-buffers: func(arg0: list<list<u8>>) -> list<list<u8>>;"));
+    assert!(wit.contains("echo-number-lists: func(arg0: list<list<f64>>) -> list<list<f64>>;"));
     assert!(
         check_contract_directory(contract, Some(&core), &output, &[])
             .expect("check generated Component")
@@ -193,6 +227,11 @@ fn package_check_and_run(
     .expect("define host buffer");
     host.func_wrap("echo", |_store, (value,): (String,)| Ok((value,)))
         .expect("define host echo");
+    host.func_wrap("numbers", |_store, (mut value,): (Vec<f64>,)| {
+        value.reverse();
+        Ok((value,))
+    })
+    .expect("define host numbers");
     let mut store = Store::new(&engine, ());
     let instance = linker
         .instantiate(&mut store, &component)
@@ -320,6 +359,89 @@ fn package_check_and_run(
     call_host_buffer
         .post_return(&mut store)
         .expect("finish host Buffer call");
+
+    let echo_bools = instance
+        .get_typed_func::<(Vec<bool>,), (Vec<bool>,)>(&mut store, "echo-bools")
+        .expect("typed echo-bools export");
+    assert_eq!(
+        echo_bools
+            .call(&mut store, (vec![true, false, true],))
+            .expect("echo Bool List"),
+        (vec![true, false, true],)
+    );
+    echo_bools
+        .post_return(&mut store)
+        .expect("finish echo-bools call");
+
+    let echo_numbers = instance
+        .get_typed_func::<(Vec<f64>,), (Vec<f64>,)>(&mut store, "echo-numbers")
+        .expect("typed echo-numbers export");
+    for numbers in [vec![], vec![1.0, -2.5, 7.0]] {
+        assert_eq!(
+            echo_numbers
+                .call(&mut store, (numbers.clone(),))
+                .expect("echo Number List"),
+            (numbers,)
+        );
+        echo_numbers
+            .post_return(&mut store)
+            .expect("finish echo-numbers call");
+    }
+
+    let call_host_numbers = instance
+        .get_typed_func::<(Vec<f64>,), (Vec<f64>,)>(&mut store, "call-host-numbers")
+        .expect("typed call-host-numbers export");
+    assert_eq!(
+        call_host_numbers
+            .call(&mut store, (vec![1.0, -2.5, 7.0],))
+            .expect("call host Number List"),
+        (vec![7.0, -2.5, 1.0],)
+    );
+    call_host_numbers
+        .post_return(&mut store)
+        .expect("finish host Number List call");
+
+    let echo_texts = instance
+        .get_typed_func::<(Vec<String>,), (Vec<String>,)>(&mut store, "echo-texts")
+        .expect("typed echo-texts export");
+    let texts = vec!["alpha".to_owned(), String::new(), "世界".to_owned()];
+    assert_eq!(
+        echo_texts
+            .call(&mut store, (texts.clone(),))
+            .expect("echo String List"),
+        (texts,)
+    );
+    echo_texts
+        .post_return(&mut store)
+        .expect("finish echo-texts call");
+
+    let echo_buffers = instance
+        .get_typed_func::<(Vec<Vec<u8>>,), (Vec<Vec<u8>>,)>(&mut store, "echo-buffers")
+        .expect("typed echo-buffers export");
+    let buffers = vec![vec![0, 255], vec![], vec![17, 0, 128]];
+    assert_eq!(
+        echo_buffers
+            .call(&mut store, (buffers.clone(),))
+            .expect("echo Buffer List"),
+        (buffers,)
+    );
+    echo_buffers
+        .post_return(&mut store)
+        .expect("finish echo-buffers call");
+
+    let echo_number_lists = instance
+        .get_typed_func::<(Vec<Vec<f64>>,), (Vec<Vec<f64>>,)>(&mut store, "echo-number-lists")
+        .expect("typed nested Number List export");
+    let nested = vec![vec![1.0, 2.0], vec![], vec![-3.0, 4.5, 7.0]];
+    assert_eq!(
+        echo_number_lists
+            .call(&mut store, (nested.clone(),))
+            .expect("echo nested Number List"),
+        (nested,)
+    );
+    echo_number_lists
+        .post_return(&mut store)
+        .expect("finish nested Number List call");
 
     let choose_number = instance
         .get_typed_func::<(bool, f64, f64), (f64,)>(&mut store, "choose-number")
