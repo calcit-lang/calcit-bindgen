@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use calcit_bindgen::{
@@ -20,6 +21,7 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
         r#"
         (module
           (import "host" "add-one" (func $host-add-one (param f64) (result f64)))
+          (import "host" "bool-not" (func $host-bool-not (param i32) (result i32)))
           (import "host" "echo" (func $host-echo (param i32 i32 i32)))
           (memory (export "memory") 1)
           (global $heap (mut i32) (i32.const 1024))
@@ -37,9 +39,15 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
             local.get $value
             f64.const {offset}
             f64.add)
+          (func (export "bool-not") (param $flag i32) (result i32)
+            local.get $flag
+            i32.eqz)
           (func (export "call-host-add-one") (param $value f64) (result f64)
             local.get $value
             call $host-add-one)
+          (func (export "call-host-bool-not") (param $flag i32) (result i32)
+            local.get $flag
+            call $host-bool-not)
           (func (export "echo-text") (param $pointer i32) (param $length i32) (result i32)
             i32.const 8
             local.get $pointer
@@ -53,7 +61,13 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
             local.get $length
             i32.const 8
             call $host-echo
-            i32.const 8))
+            i32.const 8)
+          (func (export "choose-number")
+            (param $flag i32) (param $yes f64) (param $no f64) (result f64)
+            local.get $yes
+            local.get $no
+            local.get $flag
+            select))
         "#,
     ))
     .expect("compile the Canonical ABI fixture")
@@ -80,13 +94,40 @@ fn component_contract() -> InterfaceContract {
 }
 
 #[test]
-fn packages_checks_and_runs_number_and_string_component() {
+fn packages_checks_and_runs_bool_number_and_string_component() {
     let temporary = TempDir::new().expect("temporary workspace");
-    let core = temporary.path().join("program.wasm");
-    fs::write(&core, core_module()).expect("write core module");
-    let output = temporary.path().join("generated");
-    let contract = component_contract();
-    let manifest = generate_contract_directory(&contract, Some(&core), &output, &[])
+    let output = package_check_and_run(&component_contract(), &core_module(), temporary.path());
+
+    if let Ok(path) = std::env::var("CALCIT_BINDGEN_COMPONENT_OUTPUT") {
+        fs::copy(output.join(COMPONENT_FILE), path).expect("copy Component for toolchain smoke");
+    }
+}
+
+#[test]
+#[ignore = "requires a matching Calcit core checkout"]
+fn packages_and_runs_real_calcit_bool_component() {
+    let contract_path = std::env::var("CALCIT_BINDGEN_REAL_CONTRACT")
+        .expect("CALCIT_BINDGEN_REAL_CONTRACT must name the generated contract");
+    let core_path = std::env::var("CALCIT_BINDGEN_REAL_CORE")
+        .expect("CALCIT_BINDGEN_REAL_CORE must name the generated core module");
+    let contract = load_contract(contract_path).expect("load real Calcit Component contract");
+    let core_module = fs::read(core_path).expect("read real Calcit core module");
+    let temporary = TempDir::new().expect("temporary workspace");
+    let output = package_check_and_run(&contract, &core_module, temporary.path());
+    if let Ok(path) = std::env::var("CALCIT_BINDGEN_COMPONENT_OUTPUT") {
+        fs::copy(output.join(COMPONENT_FILE), path).expect("copy real Calcit Component");
+    }
+}
+
+fn package_check_and_run(
+    contract: &InterfaceContract,
+    core_module: &[u8],
+    temporary: &Path,
+) -> PathBuf {
+    let core = temporary.join("program.wasm");
+    fs::write(&core, core_module).expect("write core module");
+    let output = temporary.join("generated");
+    let manifest = generate_contract_directory(contract, Some(&core), &output, &[])
         .expect("package Component");
 
     assert_eq!(manifest.contract_kind, ContractKind::Component);
@@ -95,7 +136,7 @@ fn packages_checks_and_runs_number_and_string_component() {
     assert!(output.join(WIT_BINDINGS_FILE).is_file());
     assert!(output.join(COMPONENT_FILE).is_file());
     assert!(
-        check_contract_directory(&contract, Some(&core), &output, &[])
+        check_contract_directory(contract, Some(&core), &output, &[])
             .expect("check generated Component")
             .current
     );
@@ -108,6 +149,8 @@ fn packages_checks_and_runs_number_and_string_component() {
     let mut host = root.instance("host").expect("define host instance");
     host.func_wrap("add-one", |_store, (value,): (f64,)| Ok((value + 2.0,)))
         .expect("define host add-one");
+    host.func_wrap("bool-not", |_store, (value,): (bool,)| Ok((!value,)))
+        .expect("define host bool-not");
     host.func_wrap("echo", |_store, (value,): (String,)| Ok((value,)))
         .expect("define host echo");
     let mut store = Store::new(&engine, ());
@@ -135,6 +178,59 @@ fn packages_checks_and_runs_number_and_string_component() {
     );
     call_host.post_return(&mut store).expect("finish host call");
 
+    let bool_not = instance
+        .get_typed_func::<(bool,), (bool,)>(&mut store, "bool-not")
+        .expect("typed bool-not export");
+    assert_eq!(
+        bool_not.call(&mut store, (true,)).expect("negate true"),
+        (false,)
+    );
+    bool_not
+        .post_return(&mut store)
+        .expect("finish bool-not true call");
+    assert_eq!(
+        bool_not.call(&mut store, (false,)).expect("negate false"),
+        (true,)
+    );
+    bool_not
+        .post_return(&mut store)
+        .expect("finish bool-not false call");
+
+    let call_host_bool = instance
+        .get_typed_func::<(bool,), (bool,)>(&mut store, "call-host-bool-not")
+        .expect("typed call-host-bool-not export");
+    assert_eq!(
+        call_host_bool
+            .call(&mut store, (true,))
+            .expect("call host bool-not"),
+        (false,)
+    );
+    call_host_bool
+        .post_return(&mut store)
+        .expect("finish host bool call");
+
+    let choose_number = instance
+        .get_typed_func::<(bool, f64, f64), (f64,)>(&mut store, "choose-number")
+        .expect("typed choose-number export");
+    assert_eq!(
+        choose_number
+            .call(&mut store, (true, 3.0, 4.0))
+            .expect("choose true branch"),
+        (3.0,)
+    );
+    choose_number
+        .post_return(&mut store)
+        .expect("finish choose-number true call");
+    assert_eq!(
+        choose_number
+            .call(&mut store, (false, 3.0, 4.0))
+            .expect("choose false branch"),
+        (4.0,)
+    );
+    choose_number
+        .post_return(&mut store)
+        .expect("finish choose-number false call");
+
     let echo = instance
         .get_typed_func::<(String,), (String,)>(&mut store, "echo-text")
         .expect("typed echo-text export");
@@ -158,9 +254,7 @@ fn packages_checks_and_runs_number_and_string_component() {
         .post_return(&mut store)
         .expect("finish host echo call");
 
-    if let Ok(path) = std::env::var("CALCIT_BINDGEN_COMPONENT_OUTPUT") {
-        fs::copy(output.join(COMPONENT_FILE), path).expect("copy Component for toolchain smoke");
-    }
+    output
 }
 
 #[test]

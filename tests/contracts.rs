@@ -73,7 +73,7 @@ fn loads_default_cirru_edn_component_contract() {
     };
     assert_eq!(document.version, 1);
     assert_eq!(document.package, "component-wasm");
-    assert_eq!(document.definitions.len(), 6);
+    assert_eq!(document.definitions.len(), 10);
     assert_eq!(document.definitions[0].symbol, "add-one");
 }
 
@@ -89,6 +89,7 @@ fn loads_explicit_json_component_projection() {
         "md5:{:x}",
         md5::compute(serde_json::to_vec(&(&document, &diagnostics)).expect("revision input"))
     );
+    let definitions = document.definitions.len();
     let envelope = serde_json::json!({
         "schema_version": 1,
         "interface_schema": "https://calcit-lang.org/schemas/component-interface-ir-v1.schema.json",
@@ -102,8 +103,8 @@ fn loads_explicit_json_component_projection() {
             },
             "interface": document,
             "summary": {
-                "definitions": 6,
-                "supported": 6,
+                "definitions": definitions,
+                "supported": definitions,
                 "unsupported": 0,
                 "diagnostics": 0
             }
