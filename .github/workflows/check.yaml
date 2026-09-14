@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: calcit-lang/calcit
-          ref: 3079c4479530c0f06d7af6d3383fc5b4a47a99ad
+          ref: 29fc1fb0776010cfd23ee9ff2ce9d60ae3f09459
           path: calcit-core
       - name: Generate and run a real Calcit Buffer Component
         if: matrix.os == 'ubuntu-latest'
