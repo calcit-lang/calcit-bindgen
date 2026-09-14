@@ -29,14 +29,14 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
-      - name: Check out the matching Calcit Bool adapters
+      - name: Check out the matching Calcit Buffer adapters
         if: matrix.os == 'ubuntu-latest'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: calcit-lang/calcit
-          ref: 50fa693c4abdac936636e7d948c429fd86844f23
+          ref: 3079c4479530c0f06d7af6d3383fc5b4a47a99ad
           path: calcit-core
-      - name: Generate and run a real Calcit Bool Component
+      - name: Generate and run a real Calcit Buffer Component
         if: matrix.os == 'ubuntu-latest'
         run: |
           cargo build --manifest-path calcit-core/Cargo.toml --bin calcit
@@ -45,7 +45,7 @@ jobs:
           CALCIT_BINDGEN_REAL_CONTRACT="$RUNNER_TEMP/component-interface.cirru" \
             CALCIT_BINDGEN_REAL_CORE="$RUNNER_TEMP/component-core/program.wasm" \
             CALCIT_BINDGEN_COMPONENT_OUTPUT="$RUNNER_TEMP/calcit-component.wasm" \
-            cargo test --test component_package packages_and_runs_real_calcit_bool_component -- --ignored --exact
+            cargo test --test component_package packages_and_runs_real_calcit_buffer_component -- --ignored --exact
       - name: Transpile and run Component with jco
         if: matrix.os == 'ubuntu-latest'
         run: |

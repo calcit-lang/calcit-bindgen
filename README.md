@@ -10,7 +10,7 @@ Interface IR.
 本仓库处于 **active development / experimental tooling** 阶段。native Interface IR v2 的
 validation、compatibility diff、canonical generate/check 与严格同步 Rust、Calcit、TypeScript、WIT
 backends 已可用；Component Interface IR v1 的第一段 production 路径也可将 Calcit 生成的
-Bool/Number/String core module 打包为可运行 WebAssembly Component。公开、版本化的 Interface IR 和
+Bool/Buffer/Number/String core module 打包为可运行 WebAssembly Component。公开、版本化的 Interface IR 和
 Canonical ABI adapter 由 Calcit core 定义；WIT、组件封装、manifest 和多宿主验证由本工具负责。
 更完整的复合类型支持与真实生态迁移仍由
 [calcit-bindgen#5](https://github.com/calcit-lang/calcit-bindgen/issues/5) 追踪。
@@ -19,7 +19,7 @@ This repository is active experimental tooling. Native Interface IR v2
 validation, compatibility diff, canonical generate/check, and strict
 synchronous Rust, Calcit, TypeScript, and WIT backends are usable. The first
 Component Interface IR v1 production slice also packages Calcit-generated
-Bool/Number/String core modules as runnable WebAssembly Components. Calcit core owns
+Bool/Buffer/Number/String core modules as runnable WebAssembly Components. Calcit core owns
 the public versioned contract and Canonical ABI adapters; this tool owns WIT,
 component packaging, manifests, and cross-host verification. Composite types
 and broader real-module migration remain tracked by calcit-bindgen#5.
@@ -70,7 +70,7 @@ calcit project/calcit.cirru ffi export --boundary component --format json \
   > component-interface.json
 ```
 
-Component generation 当前严格接受 monomorphic Bool/Number/String，并产生规范化
+Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String，并产生规范化
 `interface.json`、`wit/interface.wit`、`component/component.wasm` 与 ownership manifest。
 manifest 同时记录 contract digest、core module digest 和三个 managed artifacts。
 输入 core module 的 import/export、memory、`cabi_realloc` 或 Canonical ABI 签名不匹配时，
@@ -110,9 +110,11 @@ package 生成的 `<Package>Ffi` service trait 名属于保留 Rust type 名；d
 Calcit backend 生成 nominal `FfiClient`、带静态签名的 trait 和 impl；调用方通过
 `client .method` 使用绑定，不直接保存 native symbol 字符串。TypeScript declaration 名使用完整
 namespace-qualified declaration ID 派生，避免不同 namespace 的同名 nominal declaration 被折叠。
-WIT 使用当前 Component Model 的 `f64` 表示 Calcit Number，只生成严格可表示的 monomorphic subset；Unit field/parameter、generic declaration/application
+WIT 将 Calcit Buffer 严格映射为 `list<u8>`，将 Calcit Number 映射为当前 Component Model
+的 `f64`，只生成严格可表示的 monomorphic subset；Unit field/parameter、generic declaration/application
 等失败会包含精确的 definition/declaration type path。CI 使用 Bytecode Alliance `wit-parser`，发布前
-同时用 Wasmtime 运行 Bool/Number/String、混合签名与 host import smoke，并用 jco 转译后在 Node.js 再运行同一语义。
+同时用 Wasmtime 运行 Bool/Buffer/Number/String、混合签名与 host import smoke，并用 jco
+转译后在 Node.js 再运行同一语义。Buffer smoke 覆盖空值、内嵌零与非 UTF-8 字节，不经过 String 转码。
 
 ### Backend capability matrix
 
@@ -193,7 +195,8 @@ missing, modified, stale-manifest, and unexpected artifacts separately for CI.
 
 Component contracts reuse the same `validate`, `generate`, and `check` entry
 points. Generation additionally requires `--core-module <program.wasm>` and
-currently accepts only monomorphic Bool/Number/String definitions. It emits canonical
+currently accepts only monomorphic Bool/Buffer/Number/String definitions. It
+emits canonical
 `interface.json`, `wit/interface.wit`, a runnable `component/component.wasm`,
 and a manifest containing both contract and core-module digests. Core imports,
 exports, memory, `cabi_realloc`, and Canonical ABI signatures are checked before
@@ -215,9 +218,12 @@ do not hand-write native symbol strings. TypeScript names derive from complete
 namespace-qualified declaration IDs. WIT accepts only its monomorphic,
 representable subset and reports precise definition/declaration type paths for
 Unit value positions, generics, and other unsupported shapes. CI parses WIT
-with Bytecode Alliance `wit-parser`, executes Bool/Number/String, mixed-signature, and host-import
-smokes in Wasmtime, and transpiles and executes the same Component through jco
-and Node.js. Calcit Number maps to current WIT `f64`.
+with Bytecode Alliance `wit-parser`, executes Bool/Buffer/Number/String,
+mixed-signature, and host-import smokes in Wasmtime, and transpiles and executes
+the same Component through jco
+and Node.js. Calcit Buffer maps strictly to `list<u8>` and preserves empty,
+embedded-zero, and non-UTF-8 byte sequences without String transcoding. Calcit
+Number maps to current WIT `f64`.
 
 The capability matrix above is normative for the current MVP. Async, callback,
 resource lifecycle, Dynamic guessing, bidirectional Component bindings, and

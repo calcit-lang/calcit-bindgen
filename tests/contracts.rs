@@ -73,8 +73,14 @@ fn loads_default_cirru_edn_component_contract() {
     };
     assert_eq!(document.version, 1);
     assert_eq!(document.package, "component-wasm");
-    assert_eq!(document.definitions.len(), 10);
+    assert_eq!(document.definitions.len(), 15);
     assert_eq!(document.definitions[0].symbol, "add-one");
+    assert!(document.definitions.iter().any(|definition| {
+        definition.symbol == "echo-buffer"
+            && definition.signature.as_ref().is_some_and(|signature| {
+                signature.parameters[0].type_ir == Type::Buffer && signature.result == Type::Buffer
+            })
+    }));
 }
 
 #[test]
