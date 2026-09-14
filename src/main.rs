@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use calcit_bindgen::{
-    GenerationBackend, check_directory, check_directory_with_backends, compare, generate_directory,
-    generate_directory_with_backends, load_document,
+    GenerationBackend, InterfaceContract, check_contract_directory, compare,
+    generate_contract_directory, load_contract,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -29,6 +29,9 @@ enum Command {
         input: PathBuf,
         #[arg(long)]
         out: PathBuf,
+        /// Core WebAssembly module implementing a Component Interface IR contract.
+        #[arg(long)]
+        core_module: Option<PathBuf>,
         /// Generate only selected backends; omit to generate every backend.
         #[arg(long = "backend", value_enum)]
         backends: Vec<BackendArg>,
@@ -38,6 +41,9 @@ enum Command {
         input: PathBuf,
         #[arg(long)]
         out: PathBuf,
+        /// Core WebAssembly module used when the Component artifacts were generated.
+        #[arg(long)]
+        core_module: Option<PathBuf>,
         /// Check only selected backends; must match the generated manifest.
         #[arg(long = "backend", value_enum)]
         backends: Vec<BackendArg>,
@@ -74,18 +80,27 @@ fn main() {
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Validate { input } => {
-            let document = load_document(input)?;
+            let contract = load_contract(input)?;
             println!(
-                "valid Interface IR v{}: {} {} ({} declarations, {} definitions)",
-                document.version,
-                document.package,
-                document.package_version,
-                document.declarations.len(),
-                document.definitions.len()
+                "valid {} Interface IR v{}: {} {} ({} declarations, {} definitions)",
+                contract.kind_name(),
+                contract.version(),
+                contract.package(),
+                contract.package_version(),
+                contract.declarations_len(),
+                contract.definitions_len()
             );
         }
         Command::Diff { old, new, json } => {
-            let report = compare(&load_document(old)?, &load_document(new)?);
+            let old = load_contract(old)?;
+            let new = load_contract(new)?;
+            let (InterfaceContract::Native(old), InterfaceContract::Native(new)) = (old, new)
+            else {
+                return Err(
+                    "diff currently accepts only native Interface IR v2 contracts".to_owned(),
+                );
+            };
+            let report = compare(&old, &new);
             if json {
                 println!(
                     "{}",
@@ -108,18 +123,16 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Generate {
             input,
             out,
+            core_module,
             backends,
         } => {
-            let document = load_document(input)?;
-            let manifest = if backends.is_empty() {
-                generate_directory(&document, &out)?
-            } else {
-                let backends = backends
-                    .into_iter()
-                    .map(GenerationBackend::from)
-                    .collect::<Vec<_>>();
-                generate_directory_with_backends(&document, &out, &backends)?
-            };
+            let contract = load_contract(input)?;
+            let backends = backends
+                .into_iter()
+                .map(GenerationBackend::from)
+                .collect::<Vec<_>>();
+            let manifest =
+                generate_contract_directory(&contract, core_module.as_deref(), &out, &backends)?;
             println!(
                 "generated {} artifact(s) for {} {} in {}",
                 manifest.files.len(),
@@ -131,18 +144,16 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Check {
             input,
             out,
+            core_module,
             backends,
         } => {
-            let document = load_document(input)?;
-            let report = if backends.is_empty() {
-                check_directory(&document, &out)?
-            } else {
-                let backends = backends
-                    .into_iter()
-                    .map(GenerationBackend::from)
-                    .collect::<Vec<_>>();
-                check_directory_with_backends(&document, &out, &backends)?
-            };
+            let contract = load_contract(input)?;
+            let backends = backends
+                .into_iter()
+                .map(GenerationBackend::from)
+                .collect::<Vec<_>>();
+            let report =
+                check_contract_directory(&contract, core_module.as_deref(), &out, &backends)?;
             if report.current {
                 println!("generated artifacts are current: {}", out.display());
             } else {

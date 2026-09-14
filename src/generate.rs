@@ -6,15 +6,18 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tempfile::Builder;
 
-use crate::{Document, validate_document};
+use crate::{
+    ComponentDocument, Document, InterfaceContract, validate_component_document, validate_document,
+};
 
 pub const INTERFACE_FILE: &str = "interface.json";
 pub const RUST_BINDINGS_FILE: &str = "rust/bindings.rs";
 pub const CALCIT_BINDINGS_FILE: &str = "calcit/bindings.cirru";
 pub const TYPESCRIPT_BINDINGS_FILE: &str = "typescript/bindings.d.ts";
 pub const WIT_BINDINGS_FILE: &str = "wit/interface.wit";
+pub const COMPONENT_FILE: &str = "component/component.wasm";
 pub const MANIFEST_FILE: &str = "calcit-bindgen.manifest.json";
-const MANIFEST_SCHEMA_VERSION: u32 = 2;
+const MANIFEST_SCHEMA_VERSION: u32 = 3;
 const GENERATOR_NAME: &str = "calcit-bindgen";
 const DIGEST_ALGORITHM: &str = "fnv1a-128";
 
@@ -36,9 +39,25 @@ pub struct Manifest {
     pub package_version: String,
     pub digest_algorithm: String,
     pub contract_digest: String,
+    #[serde(default = "native_contract_kind")]
+    pub contract_kind: ContractKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core_module_digest: Option<String>,
     #[serde(default = "legacy_manifest_backends")]
     pub backends: Vec<GenerationBackend>,
     pub files: Vec<ArtifactDigest>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContractKind {
+    #[default]
+    Native,
+    Component,
+}
+
+fn native_contract_kind() -> ContractKind {
+    ContractKind::Native
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -115,8 +134,11 @@ pub fn generate_directory_with_backends(
     output: impl AsRef<Path>,
     backends: &[GenerationBackend],
 ) -> Result<Manifest, String> {
-    let output = output.as_ref();
     let rendered = render(document, backends)?;
+    install_rendered(rendered, output.as_ref())
+}
+
+fn install_rendered(rendered: RenderedOutput, output: &Path) -> Result<Manifest, String> {
     let parent = output_parent(output)?;
     fs::create_dir_all(parent).map_err(|error| {
         format!(
@@ -210,8 +232,11 @@ pub fn check_directory_with_backends(
     output: impl AsRef<Path>,
     backends: &[GenerationBackend],
 ) -> Result<CheckReport, String> {
-    let output = output.as_ref();
     let rendered = render(document, backends)?;
+    check_rendered(rendered, output.as_ref())
+}
+
+fn check_rendered(rendered: RenderedOutput, output: &Path) -> Result<CheckReport, String> {
     let mut issues = Vec::new();
     if !output.exists() {
         issues.push(issue(
@@ -316,6 +341,120 @@ pub fn check_directory_with_backends(
     })
 }
 
+pub fn generate_contract_directory(
+    contract: &InterfaceContract,
+    core_module: Option<&Path>,
+    output: impl AsRef<Path>,
+    backends: &[GenerationBackend],
+) -> Result<Manifest, String> {
+    let rendered = render_contract(contract, core_module, backends)?;
+    install_rendered(rendered, output.as_ref())
+}
+
+pub fn check_contract_directory(
+    contract: &InterfaceContract,
+    core_module: Option<&Path>,
+    output: impl AsRef<Path>,
+    backends: &[GenerationBackend],
+) -> Result<CheckReport, String> {
+    let rendered = render_contract(contract, core_module, backends)?;
+    check_rendered(rendered, output.as_ref())
+}
+
+fn render_contract(
+    contract: &InterfaceContract,
+    core_module: Option<&Path>,
+    backends: &[GenerationBackend],
+) -> Result<RenderedOutput, String> {
+    match contract {
+        InterfaceContract::Native(document) => {
+            if core_module.is_some() {
+                return Err("--core-module is valid only for Component Interface IR".to_owned());
+            }
+            if backends.is_empty() {
+                render(document, &ALL_BACKENDS)
+            } else {
+                render(document, backends)
+            }
+        }
+        InterfaceContract::Component(document) => {
+            let core_module = core_module.ok_or_else(|| {
+                "Component generation requires --core-module <program.wasm>".to_owned()
+            })?;
+            render_component(document, core_module, backends)
+        }
+    }
+}
+
+fn render_component(
+    document: &ComponentDocument,
+    core_module: &Path,
+    backends: &[GenerationBackend],
+) -> Result<RenderedOutput, String> {
+    validate_component_document(document)?;
+    let backends = if backends.is_empty() {
+        BTreeSet::from([GenerationBackend::Wit])
+    } else {
+        backends.iter().copied().collect::<BTreeSet<_>>()
+    };
+    if backends != BTreeSet::from([GenerationBackend::Wit]) {
+        return Err(
+            "Component generation currently owns the WIT backend; omit --backend or select only --backend wit"
+                .to_owned(),
+        );
+    }
+
+    let mut canonical = document.clone();
+    canonical
+        .declarations
+        .sort_by(|left, right| left.id().cmp(right.id()));
+    canonical
+        .definitions
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    for definition in &mut canonical.definitions {
+        definition.diagnostic_codes.sort();
+        definition.diagnostic_codes.dedup();
+    }
+    let mut interface = serde_json::to_vec_pretty(&canonical)
+        .map_err(|error| format!("failed to encode canonical Component Interface IR: {error}"))?;
+    interface.push(b'\n');
+    let contract_digest = digest(&interface);
+    let core_module_bytes = fs::read(core_module).map_err(|error| {
+        format!(
+            "failed to read core WebAssembly module {}: {error}",
+            core_module.display()
+        )
+    })?;
+    let core_module_digest = digest(&core_module_bytes);
+    let packaged = crate::component::package(&canonical, &core_module_bytes)?;
+    let files = BTreeMap::from([
+        (INTERFACE_FILE.to_owned(), interface),
+        (WIT_BINDINGS_FILE.to_owned(), packaged.wit.into_bytes()),
+        (COMPONENT_FILE.to_owned(), packaged.component),
+    ]);
+    let manifest = Manifest {
+        schema_version: MANIFEST_SCHEMA_VERSION,
+        generator: GENERATOR_NAME.to_owned(),
+        generator_version: env!("CARGO_PKG_VERSION").to_owned(),
+        interface_version: canonical.version,
+        package: canonical.package,
+        package_version: canonical.package_version,
+        digest_algorithm: DIGEST_ALGORITHM.to_owned(),
+        contract_digest,
+        contract_kind: ContractKind::Component,
+        core_module_digest: Some(core_module_digest),
+        backends: backends.into_iter().collect(),
+        files: files
+            .iter()
+            .map(|(path, bytes)| ArtifactDigest {
+                path: path.clone(),
+                digest: digest(bytes),
+            })
+            .collect(),
+    };
+    Ok(RenderedOutput { manifest, files })
+}
+
 fn render(document: &Document, backends: &[GenerationBackend]) -> Result<RenderedOutput, String> {
     validate_document(document)?;
     let unsupported = document
@@ -372,6 +511,8 @@ fn render(document: &Document, backends: &[GenerationBackend]) -> Result<Rendere
         package_version: canonical.package_version,
         digest_algorithm: DIGEST_ALGORITHM.to_owned(),
         contract_digest,
+        contract_kind: ContractKind::Native,
+        core_module_digest: None,
         backends: backends.into_iter().collect(),
         files: files
             .iter()

@@ -572,7 +572,7 @@ fn generate_and_check_cli_report_ci_friendly_status() {
     let manifest: Manifest =
         serde_json::from_slice(&fs::read(output.join(MANIFEST_FILE)).expect("read manifest"))
             .expect("parse manifest");
-    assert_eq!(manifest.schema_version, 2);
+    assert_eq!(manifest.schema_version, 3);
 }
 
 #[test]

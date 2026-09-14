@@ -7,23 +7,28 @@ Interface IR.
 
 ## Status / 状态
 
-本仓库处于 **active development / experimental tooling** 阶段。v2 validation、
-compatibility diff、canonical generate/check，以及严格同步 Rust、Calcit、TypeScript、WIT
-backends 已可用；在更多真实模块迁移和 core cutover 完成前，尚不替代 Calcit core 的 preview generator。公开、
-版本化的 Interface IR 由 Calcit core 定义；本工具独立发布，production MVP 由
+本仓库处于 **active development / experimental tooling** 阶段。native Interface IR v2 的
+validation、compatibility diff、canonical generate/check 与严格同步 Rust、Calcit、TypeScript、WIT
+backends 已可用；Component Interface IR v1 的第一段 production 路径也可将 Calcit 生成的
+Number/String core module 打包为可运行 WebAssembly Component。公开、版本化的 Interface IR 和
+Canonical ABI adapter 由 Calcit core 定义；WIT、组件封装、manifest 和多宿主验证由本工具负责。
+更完整的复合类型支持与真实生态迁移仍由
 [calcit-bindgen#5](https://github.com/calcit-lang/calcit-bindgen/issues/5) 追踪。
 
-This repository is active experimental tooling. Validation, compatibility diff,
-canonical generate/check, and strict synchronous Rust, Calcit, TypeScript, and
-WIT backends are usable. It does not replace the core preview generator until
-real-module migration and the core cutover pass.
-Calcit core owns the versioned Interface IR contract; this tool has an
-independent release cadence tracked by calcit-bindgen#5.
+This repository is active experimental tooling. Native Interface IR v2
+validation, compatibility diff, canonical generate/check, and strict
+synchronous Rust, Calcit, TypeScript, and WIT backends are usable. The first
+Component Interface IR v1 production slice also packages Calcit-generated
+Number/String core modules as runnable WebAssembly Components. Calcit core owns
+the public versioned contract and Canonical ABI adapters; this tool owns WIT,
+component packaging, manifests, and cross-host verification. Composite types
+and broader real-module migration remain tracked by calcit-bindgen#5.
 
 ## 中文
 
-该 crate 独立于 Calcit core，严格消费 `calcit ffi export --json` 产生的版本化
-Interface IR。当前第一段实现提供 v2 envelope/document 校验和兼容性 diff，确保
+该 crate 独立于 Calcit core，严格消费 `calcit ffi export` 产生的版本化 Interface IR。
+Component contract 默认使用 Cirru EDN；需要接入只接受 JSON 的工具时，可显式指定
+`--format json`。native v2 envelope/document 继续支持 JSON 校验和兼容性 diff，确保
 未知版本、缺失 declaration、错误 nominal kind/arity、非 monomorphic callable 在
 进入生成器前失败。
 
@@ -44,6 +49,33 @@ cargo run -- check interface.json --out generated
 cargo run -- generate interface.json --out generated-rust --backend rust
 cargo run -- check interface.json --out generated-rust --backend rust
 ```
+
+Component 路径复用同一组命令，不增加新的顶层工具入口：
+
+```bash
+# Cirru EDN 是 Component contract 的默认格式
+calcit project/calcit.cirru ffi export --boundary component > component-interface.cirru
+calcit project/calcit.cirru wasm --boundary component --emit-path target/component-core
+
+cargo run -- validate component-interface.cirru
+cargo run -- generate component-interface.cirru \
+  --core-module target/component-core/program.wasm \
+  --out generated-component
+cargo run -- check component-interface.cirru \
+  --core-module target/component-core/program.wasm \
+  --out generated-component
+
+# JSON 仅作为显式兼容投影
+calcit project/calcit.cirru ffi export --boundary component --format json \
+  > component-interface.json
+```
+
+Component generation 当前严格接受 monomorphic Number/String，并产生规范化
+`interface.json`、`wit/interface.wit`、`component/component.wasm` 与 ownership manifest。
+manifest 同时记录 contract digest、core module digest 和三个 managed artifacts。
+输入 core module 的 import/export、memory、`cabi_realloc` 或 Canonical ABI 签名不匹配时，
+命令会在创建或替换输出目录前失败。`check` 会重新编码并保持只读，因此也能发现 core module
+变化造成的 stale artifact。
 
 `diff` 将新增 definition/declaration 标记为 additive；删除或修改现有 contract
 标记为 breaking，并以非零状态退出，适合 CI 守门。
@@ -78,9 +110,9 @@ package 生成的 `<Package>Ffi` service trait 名属于保留 Rust type 名；d
 Calcit backend 生成 nominal `FfiClient`、带静态签名的 trait 和 impl；调用方通过
 `client .method` 使用绑定，不直接保存 native symbol 字符串。TypeScript declaration 名使用完整
 namespace-qualified declaration ID 派生，避免不同 namespace 的同名 nominal declaration 被折叠。
-WIT 只生成严格可表示的 monomorphic subset；Unit field/parameter、generic declaration/application
+WIT 使用当前 Component Model 的 `f64` 表示 Calcit Number，只生成严格可表示的 monomorphic subset；Unit field/parameter、generic declaration/application
 等失败会包含精确的 definition/declaration type path。CI 使用 Bytecode Alliance `wit-parser`，发布前
-同时以 `wasm-tools component wit generated/wit/interface.wit` 抽样验证。
+同时用 Wasmtime 运行 Number/String 与 host import smoke，并用 jco 转译后在 Node.js 再运行同一语义。
 
 ### Backend capability matrix
 
@@ -95,7 +127,7 @@ WIT 只生成严格可表示的 monomorphic subset；Unit field/parameter、gene
 非目标包括猜测 Dynamic、把 resource 伪装成 Struct、生成双向 Component bindings，以及在本仓库
 重新定义 Calcit Interface IR 或 native ABI。
 
-消费 crate 需要依赖 `calcit_native_ffi = "0.1.3"` 和 `cirru_edn = "0.8.0"`，在 crate
+消费 crate 需要依赖 `calcit_native_ffi = "0.1.3"` 和 `cirru_edn = "0.8.2"`，在 crate
 根部 `include!` 生成文件，实现其中的 package service trait，然后调用生成的
 `export_<package>_ffi!(SERVICE)` macro。生成目录是整体托管产物，不要手改
 `rust/bindings.rs`。
@@ -105,10 +137,23 @@ WIT 只生成严格可表示的 monomorphic subset；Unit field/parameter、gene
 ## English
 
 This crate is independent of Calcit core and strictly consumes versioned
-Interface IR emitted by `calcit ffi export --json`. The initial slice validates
-v2 envelopes/documents and reports compatibility changes before generation.
-Unknown versions, missing declarations, nominal kind/arity mismatches, and
-non-monomorphic callables fail explicitly.
+Interface IR emitted by `calcit ffi export`. Component contracts default to
+Cirru EDN; use `--format json` only when interoperating with JSON-only tooling.
+Native v2 envelopes/documents remain JSON-compatible and support compatibility
+diffs before generation. Unknown versions, missing declarations, nominal
+kind/arity mismatches, and non-monomorphic callables fail explicitly.
+
+```bash
+# Cirru EDN is the default Component contract format.
+calcit project/calcit.cirru ffi export --boundary component > component-interface.cirru
+calcit project/calcit.cirru wasm --boundary component --emit-path target/component-core
+cargo run -- generate component-interface.cirru \
+  --core-module target/component-core/program.wasm \
+  --out generated-component
+cargo run -- check component-interface.cirru \
+  --core-module target/component-core/program.wasm \
+  --out generated-component
+```
 
 For a `calcit ffi export --json` envelope, validation also checks the envelope
 schema ID, dependency filter, summary counts, complete structured diagnostics,
@@ -146,6 +191,15 @@ to remove files outside the previous manifest. A complete staged directory is
 committed by an atomic same-filesystem rename. `check` is read-only and reports
 missing, modified, stale-manifest, and unexpected artifacts separately for CI.
 
+Component contracts reuse the same `validate`, `generate`, and `check` entry
+points. Generation additionally requires `--core-module <program.wasm>` and
+currently accepts only monomorphic Number/String definitions. It emits canonical
+`interface.json`, `wit/interface.wit`, a runnable `component/component.wasm`,
+and a manifest containing both contract and core-module digests. Core imports,
+exports, memory, `cabi_realloc`, and Canonical ABI signatures are checked before
+the managed output directory is created or replaced. `check` deterministically
+re-encodes the component without modifying the output directory.
+
 The Rust backend accepts only `native + sync + edn-buffer-v1`. It emits
 namespace-qualified Rust names, a typed service trait, codecs for the strict
 Unit/Bool/Number/String/Buffer/List/Struct/Enum/Option/Result subset, and C
@@ -161,15 +215,16 @@ do not hand-write native symbol strings. TypeScript names derive from complete
 namespace-qualified declaration IDs. WIT accepts only its monomorphic,
 representable subset and reports precise definition/declaration type paths for
 Unit value positions, generics, and other unsupported shapes. CI parses WIT
-with Bytecode Alliance `wit-parser`; release evidence also runs `wasm-tools
-component wit`.
+with Bytecode Alliance `wit-parser`, executes Number/String and host-import
+smokes in Wasmtime, and transpiles and executes the same Component through jco
+and Node.js. Calcit Number maps to current WIT `f64`.
 
 The capability matrix above is normative for the current MVP. Async, callback,
 resource lifecycle, Dynamic guessing, bidirectional Component bindings, and
 ownership of the Interface IR or native ABI are explicit non-goals.
 
 Consumer crates depend on `calcit_native_ffi = "0.1.3"` and
-`cirru_edn = "0.8.0"`, `include!` the generated file at crate root, implement
+`cirru_edn = "0.8.2"`, `include!` the generated file at crate root, implement
 its package service trait, and invoke the generated
 `export_<package>_ffi!(SERVICE)` macro. Treat the generated directory as a
 managed artifact and do not edit `rust/bindings.rs` by hand.

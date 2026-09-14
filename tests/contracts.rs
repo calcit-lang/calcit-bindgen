@@ -1,6 +1,7 @@
 use calcit_bindgen::{
-    ChangeKind, Declaration, Definition, DefinitionStatus, Document, FunctionSignature, Lowering,
-    Parameter, StructField, Type, compare, load_document, validate_document,
+    ChangeKind, Declaration, Definition, DefinitionStatus, Document, FunctionSignature,
+    InterfaceContract, Lowering, Parameter, StructField, Type, compare, load_contract,
+    load_document, validate_document,
 };
 use std::fs;
 use std::process::Command;
@@ -61,6 +62,64 @@ fn load_json(value: &serde_json::Value) -> Result<Document, String> {
     )
     .expect("write Interface IR fixture");
     load_document(file.path())
+}
+
+#[test]
+fn loads_default_cirru_edn_component_contract() {
+    let contract = load_contract("tests/fixtures/component-interface.cirru")
+        .expect("load the public Component Interface IR fixture");
+    let InterfaceContract::Component(document) = contract else {
+        panic!("expected a Component contract");
+    };
+    assert_eq!(document.version, 1);
+    assert_eq!(document.package, "component-wasm");
+    assert_eq!(document.definitions.len(), 6);
+    assert_eq!(document.definitions[0].symbol, "add-one");
+}
+
+#[test]
+fn loads_explicit_json_component_projection() {
+    let InterfaceContract::Component(document) =
+        load_contract("tests/fixtures/component-interface.cirru").expect("load EDN contract")
+    else {
+        panic!("expected a Component contract");
+    };
+    let diagnostics = Vec::<serde_json::Value>::new();
+    let revision = format!(
+        "md5:{:x}",
+        md5::compute(serde_json::to_vec(&(&document, &diagnostics)).expect("revision input"))
+    );
+    let envelope = serde_json::json!({
+        "schema_version": 1,
+        "interface_schema": "https://calcit-lang.org/schemas/component-interface-ir-v1.schema.json",
+        "command": "ffi.export",
+        "revision": revision,
+        "data": {
+            "filters": {
+                "boundary": "component",
+                "namespace": null,
+                "include_dependencies": false
+            },
+            "interface": document,
+            "summary": {
+                "definitions": 6,
+                "supported": 6,
+                "unsupported": 0,
+                "diagnostics": 0
+            }
+        },
+        "diagnostics": diagnostics
+    });
+    let file = tempfile::NamedTempFile::new().expect("temporary Component JSON");
+    fs::write(
+        file.path(),
+        serde_json::to_vec_pretty(&envelope).expect("encode Component JSON"),
+    )
+    .expect("write Component JSON");
+    assert!(matches!(
+        load_contract(file.path()).expect("load explicit JSON projection"),
+        InterfaceContract::Component(_)
+    ));
 }
 
 #[derive(Clone, serde::Serialize)]

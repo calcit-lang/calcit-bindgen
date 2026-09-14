@@ -12,6 +12,89 @@ pub struct EnvelopeData {
     pub interface: Document,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InterfaceContract {
+    Native(Document),
+    Component(ComponentDocument),
+}
+
+impl InterfaceContract {
+    pub fn version(&self) -> u32 {
+        match self {
+            Self::Native(document) => document.version,
+            Self::Component(document) => document.version,
+        }
+    }
+
+    pub fn package(&self) -> &str {
+        match self {
+            Self::Native(document) => &document.package,
+            Self::Component(document) => &document.package,
+        }
+    }
+
+    pub fn package_version(&self) -> &str {
+        match self {
+            Self::Native(document) => &document.package_version,
+            Self::Component(document) => &document.package_version,
+        }
+    }
+
+    pub fn declarations_len(&self) -> usize {
+        match self {
+            Self::Native(document) => document.declarations.len(),
+            Self::Component(document) => document.declarations.len(),
+        }
+    }
+
+    pub fn definitions_len(&self) -> usize {
+        match self {
+            Self::Native(document) => document.definitions.len(),
+            Self::Component(document) => document.definitions.len(),
+        }
+    }
+
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Native(_) => "native",
+            Self::Component(_) => "component",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentDocument {
+    pub version: u32,
+    pub package: String,
+    pub package_version: String,
+    pub declarations: Vec<Declaration>,
+    pub definitions: Vec<ComponentDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentDefinition {
+    pub id: String,
+    pub namespace: String,
+    pub name: String,
+    pub doc: String,
+    pub logical_schema: String,
+    pub direction: ComponentDirection,
+    pub module: Option<String>,
+    pub symbol: String,
+    pub signature: Option<FunctionSignature>,
+    pub status: DefinitionStatus,
+    pub diagnostic_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ComponentDirection {
+    Import,
+    Export,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {

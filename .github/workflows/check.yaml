@@ -25,6 +25,14 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: Build Component fixture for jco
+        if: matrix.os == 'ubuntu-latest'
+        run: CALCIT_BINDGEN_COMPONENT_OUTPUT="$RUNNER_TEMP/calcit-component.wasm" cargo test --test component_package packages_checks_and_runs_number_and_string_component
+      - name: Transpile and run Component with jco
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          npx --yes @bytecodealliance/jco@1.16.1 transpile "$RUNNER_TEMP/calcit-component.wasm" --out-dir "$RUNNER_TEMP/jco" --name component --instantiation async --no-typescript
+          node --experimental-default-type=module tests/jco-smoke.mjs "$RUNNER_TEMP/jco/component.js"
       - run: cargo package
 
   docs:
