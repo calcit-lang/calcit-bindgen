@@ -4,10 +4,15 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Declaration, DefinitionStatus, Document, Type};
+use crate::{
+    ComponentDefinition, ComponentDirection, ComponentDocument, Declaration, DefinitionStatus,
+    Document, InterfaceContract, Type,
+};
 
 const FFI_INTERFACE_IR_V2_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json";
+const COMPONENT_INTERFACE_IR_V1_SCHEMA_ID: &str =
+    "https://calcit-lang.org/schemas/component-interface-ir-v1.schema.json";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +23,34 @@ struct ExportEnvelope {
     revision: String,
     data: ExportEnvelopeData,
     diagnostics: Vec<ExportDiagnostic>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ComponentExportEnvelope {
+    schema_version: u32,
+    interface_schema: String,
+    command: String,
+    revision: String,
+    data: ComponentExportEnvelopeData,
+    diagnostics: Vec<ExportDiagnostic>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ComponentExportEnvelopeData {
+    filters: ComponentExportFilters,
+    interface: ComponentDocument,
+    summary: ExportSummary,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ComponentExportFilters {
+    boundary: String,
+    #[allow(dead_code)]
+    namespace: Option<String>,
+    include_dependencies: bool,
 }
 
 #[derive(Deserialize)]
@@ -58,22 +91,104 @@ struct ExportDiagnostic {
 }
 
 pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
+    match load_contract(path)? {
+        InterfaceContract::Native(document) => Ok(document),
+        InterfaceContract::Component(_) => {
+            Err("expected native Interface IR v2, received Component Interface IR v1".to_owned())
+        }
+    }
+}
+
+pub fn load_contract(path: impl AsRef<Path>) -> Result<InterfaceContract, String> {
     let path = path.as_ref();
     let source = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&source)
-        .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
-    let document = if value.get("command").is_some() {
+    let value = parse_structured_source(&source, path)?;
+    if value.get("command").is_some() {
+        let schema = value
+            .get("interface_schema")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "ffi.export envelope must declare interface_schema".to_owned())?;
+        if schema == COMPONENT_INTERFACE_IR_V1_SCHEMA_ID {
+            let envelope: ComponentExportEnvelope = serde_json::from_value(value)
+                .map_err(|error| format!("invalid Component ffi.export envelope: {error}"))?;
+            validate_component_export_envelope(&envelope)?;
+            validate_component_document(&envelope.data.interface)?;
+            return Ok(InterfaceContract::Component(envelope.data.interface));
+        }
         let envelope: ExportEnvelope = serde_json::from_value(value)
             .map_err(|error| format!("invalid ffi.export envelope: {error}"))?;
         validate_export_envelope(&envelope)?;
-        envelope.data.interface
+        validate_document(&envelope.data.interface)?;
+        Ok(InterfaceContract::Native(envelope.data.interface))
     } else {
-        serde_json::from_value(value)
-            .map_err(|error| format!("invalid Interface IR document: {error}"))?
-    };
-    validate_document(&document)?;
-    Ok(document)
+        let document: Document = serde_json::from_value(value)
+            .map_err(|error| format!("invalid Interface IR document: {error}"))?;
+        validate_document(&document)?;
+        Ok(InterfaceContract::Native(document))
+    }
+}
+
+fn parse_structured_source(source: &str, path: &Path) -> Result<serde_json::Value, String> {
+    if source.trim_start().starts_with('{') && !source.trim_start().starts_with("{}") {
+        serde_json::from_str(source)
+            .map_err(|error| format!("failed to parse JSON {}: {error}", path.display()))
+    } else {
+        let value = cirru_edn::parse(source)
+            .map_err(|error| format!("failed to parse Cirru EDN {}: {error}", path.display()))?;
+        edn_to_json(&value, "$")
+    }
+}
+
+fn edn_to_json(value: &cirru_edn::Edn, path: &str) -> Result<serde_json::Value, String> {
+    use cirru_edn::Edn;
+    match value {
+        Edn::Nil => Ok(serde_json::Value::Null),
+        Edn::Bool(value) => Ok(serde_json::Value::Bool(*value)),
+        Edn::Number(value)
+            if value.is_finite()
+                && value.fract() == 0.0
+                && *value >= 0.0
+                && *value <= 9_007_199_254_740_992.0 =>
+        {
+            let integer = *value as u64;
+            Ok(serde_json::Value::Number(integer.into()))
+        }
+        Edn::Number(value) if value.is_finite() && value.fract() == 0.0 => Err(format!(
+            "{path}: integer is outside the non-negative lossless JSON range"
+        )),
+        Edn::Number(value) if value.is_finite() => serde_json::Number::from_f64(*value)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| format!("{path}: number is not representable in JSON")),
+        Edn::Str(value) => Ok(serde_json::Value::String(value.to_string())),
+        Edn::Tag(value) => Ok(serde_json::Value::String(value.ref_str().to_owned())),
+        Edn::List(values) => values
+            .0
+            .iter()
+            .enumerate()
+            .map(|(index, value)| edn_to_json(value, &format!("{path}[{index}]")))
+            .collect::<Result<Vec<_>, _>>()
+            .map(serde_json::Value::Array),
+        Edn::Map(values) => {
+            let mut output = serde_json::Map::new();
+            for (key, value) in &values.0 {
+                let key = match key {
+                    Edn::Tag(value) => value.ref_str().replace('-', "_"),
+                    other => {
+                        return Err(format!("{path}: map key {other} must be a tag"));
+                    }
+                };
+                if output.contains_key(&key) {
+                    return Err(format!("{path}: duplicate normalized map key {key:?}"));
+                }
+                output.insert(key.clone(), edn_to_json(value, &format!("{path}.{key}"))?);
+            }
+            Ok(serde_json::Value::Object(output))
+        }
+        other => Err(format!(
+            "{path}: unsupported Cirru EDN value in an interface contract: {other}"
+        )),
+    }
 }
 
 fn validate_export_envelope(envelope: &ExportEnvelope) -> Result<(), String> {
@@ -166,6 +281,108 @@ fn validate_export_envelope(envelope: &ExportEnvelope) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_component_export_envelope(envelope: &ComponentExportEnvelope) -> Result<(), String> {
+    if envelope.schema_version != 1 || envelope.command != "ffi.export" {
+        return Err(format!(
+            "expected Component ffi.export envelope schema v1, received command {:?} schema v{}",
+            envelope.command, envelope.schema_version
+        ));
+    }
+    if envelope.interface_schema != COMPONENT_INTERFACE_IR_V1_SCHEMA_ID {
+        return Err(format!(
+            "expected Component Interface IR schema {COMPONENT_INTERFACE_IR_V1_SCHEMA_ID:?}, received {:?}",
+            envelope.interface_schema
+        ));
+    }
+    if envelope.data.filters.boundary != "component" {
+        return Err(format!(
+            "Component ffi.export boundary must be \"component\", received {:?}",
+            envelope.data.filters.boundary
+        ));
+    }
+    if envelope.data.filters.include_dependencies {
+        return Err("Component ffi.export v1 must not include dependency definitions".to_owned());
+    }
+
+    validate_export_summary(
+        &envelope.data.interface.definitions,
+        &envelope.data.summary,
+        &envelope.diagnostics,
+    )?;
+
+    let revision_payload = serde_json::to_vec(&(&envelope.data.interface, &envelope.diagnostics))
+        .map_err(|error| {
+        format!("failed to encode Component ffi.export revision input: {error}")
+    })?;
+    let expected_revision = format!("md5:{:x}", md5::compute(revision_payload));
+    if envelope.revision != expected_revision {
+        return Err(format!(
+            "Component ffi.export revision mismatch: expected {expected_revision}, received {}",
+            envelope.revision
+        ));
+    }
+    Ok(())
+}
+
+fn validate_export_summary(
+    definitions: &[ComponentDefinition],
+    summary: &ExportSummary,
+    diagnostics: &[ExportDiagnostic],
+) -> Result<(), String> {
+    let supported = definitions
+        .iter()
+        .filter(|definition| definition.status == DefinitionStatus::Supported)
+        .count();
+    let definition_count = definitions.len();
+    let unsupported = definition_count - supported;
+    if summary.definitions != definition_count
+        || summary.supported != supported
+        || summary.unsupported != unsupported
+        || summary.diagnostics != diagnostics.len()
+    {
+        return Err(format!(
+            "Component ffi.export summary does not match the embedded interface and diagnostics: expected definitions={definition_count}, supported={supported}, unsupported={unsupported}, diagnostics={}",
+            diagnostics.len()
+        ));
+    }
+
+    let mut observed_diagnostic_codes = BTreeSet::new();
+    for diagnostic in diagnostics {
+        let Some(definition) = definitions
+            .iter()
+            .find(|definition| definition.id == diagnostic.definition)
+        else {
+            return Err(format!(
+                "Component ffi.export diagnostic {} references unknown definition {}",
+                diagnostic.code, diagnostic.definition
+            ));
+        };
+        if !definition
+            .diagnostic_codes
+            .iter()
+            .any(|code| code == &diagnostic.code)
+        {
+            return Err(format!(
+                "Component ffi.export diagnostic {} is not listed by definition {}",
+                diagnostic.code, diagnostic.definition
+            ));
+        }
+        observed_diagnostic_codes
+            .insert((diagnostic.definition.as_str(), diagnostic.code.as_str()));
+    }
+    for definition in definitions {
+        for code in &definition.diagnostic_codes {
+            if !observed_diagnostic_codes.contains(&(definition.id.as_str(), code.as_str())) {
+                return Err(format!(
+                    "Component ffi.export definition {} lists diagnostic code {} without a structured diagnostic",
+                    definition.id, code
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_document(document: &Document) -> Result<(), String> {
     if document.version != 2 {
         return Err(format!(
@@ -234,6 +451,130 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
                 if !definition.diagnostic_codes.is_empty() {
                     return Err(format!(
                         "supported definition {} still has diagnostics",
+                        definition.id
+                    ));
+                }
+                let none = BTreeSet::new();
+                for (index, parameter) in signature.parameters.iter().enumerate() {
+                    if parameter.position != index {
+                        return Err(format!(
+                            "{} has non-contiguous parameter positions",
+                            definition.id
+                        ));
+                    }
+                    validate_type(&parameter.type_ir, &declarations, &none, false)?;
+                }
+                validate_type(&signature.result, &declarations, &none, false)?;
+            }
+            (DefinitionStatus::Unsupported, Some(_)) | (DefinitionStatus::Unsupported, None) => {}
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_component_document(document: &ComponentDocument) -> Result<(), String> {
+    if document.version != 1 {
+        return Err(format!(
+            "unsupported Component Interface IR version {}; calcit-bindgen requires v1",
+            document.version
+        ));
+    }
+    if document.package.is_empty() || document.package_version.is_empty() {
+        return Err(
+            "Component Interface IR package and package_version must not be empty".to_owned(),
+        );
+    }
+
+    let declarations = document
+        .declarations
+        .iter()
+        .map(|declaration| (declaration.id(), declaration))
+        .collect::<BTreeMap<_, _>>();
+    if declarations.len() != document.declarations.len() {
+        return Err("Component Interface IR contains duplicate declaration IDs".to_owned());
+    }
+    for declaration in &document.declarations {
+        let parameters = declaration
+            .type_parameters()
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if parameters.len() != declaration.type_parameters().len() {
+            return Err(format!(
+                "{} contains duplicate type parameters",
+                declaration.id()
+            ));
+        }
+        match declaration {
+            Declaration::Struct { fields, .. } => {
+                for field in fields {
+                    validate_type(&field.type_ir, &declarations, &parameters, true)?;
+                }
+            }
+            Declaration::Enum { variants, .. } => {
+                for variant in variants {
+                    for item in &variant.payload {
+                        validate_type(item, &declarations, &parameters, true)?;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut ids = BTreeSet::new();
+    let mut bindings = BTreeSet::new();
+    for definition in &document.definitions {
+        if !ids.insert(definition.id.as_str()) {
+            return Err(format!(
+                "Component Interface IR contains duplicate definition ID {}",
+                definition.id
+            ));
+        }
+        if definition.symbol.is_empty() {
+            return Err(format!("{} has an empty Component symbol", definition.id));
+        }
+        match definition.direction {
+            ComponentDirection::Import => {
+                if definition.module.as_deref().is_none_or(str::is_empty) {
+                    return Err(format!(
+                        "Component import {} requires a non-empty module",
+                        definition.id
+                    ));
+                }
+            }
+            ComponentDirection::Export if definition.module.is_some() => {
+                return Err(format!(
+                    "Component export {} must not declare a module",
+                    definition.id
+                ));
+            }
+            ComponentDirection::Export => {}
+        }
+        let identity = (
+            definition.direction,
+            definition.module.as_deref().unwrap_or(""),
+            definition.symbol.as_str(),
+        );
+        if !bindings.insert(identity) {
+            return Err(format!(
+                "Component Interface IR contains duplicate {:?} binding {}/{}",
+                definition.direction,
+                definition.module.as_deref().unwrap_or("<world>"),
+                definition.symbol
+            ));
+        }
+
+        match (definition.status, definition.signature.as_ref()) {
+            (DefinitionStatus::Supported, None) => {
+                return Err(format!(
+                    "supported Component definition {} has no signature",
+                    definition.id
+                ));
+            }
+            (DefinitionStatus::Supported, Some(signature)) => {
+                if !definition.diagnostic_codes.is_empty() {
+                    return Err(format!(
+                        "supported Component definition {} still has diagnostics",
                         definition.id
                     ));
                 }

@@ -7,6 +7,8 @@
 - production output 不允许保留 `todo!` 或 Dynamic fallback。
 - Rust backend 当前只接受 `native + sync + edn-buffer-v1`；export 与 ownership 必须复用 `calcit-native-ffi`，不得复制 ABI 常量或 symbol 模板。
 - Calcit backend 通过 typed trait methods 暴露 nominal client；TypeScript 保留 namespace-qualified declaration names；WIT 只支持严格 monomorphic subset，并为失败提供精确 path。
+- Component contract 默认读取 Cirru EDN，JSON 仅为显式兼容投影；复用 `validate`、`generate`、`check`，不得新增平行顶层命令。
+- Component packaging 必须在写入前验证 core module，并以 Wasmtime 与 jco 执行不可跳过的 Number/String smoke。
 - `generate` 与 `check` 必须使用同一显式 backend 集合，ownership manifest 记录该集合。
 - Rust 生成物在消费 crate 根部 include，业务实现通过生成的 typed service trait 和 package export macro 接入。
 - generated output 只能替换带有效 ownership manifest 的专用目录；发现未托管文件必须失败并保留用户数据。
@@ -21,6 +23,8 @@
 - Production output must not contain `todo!` or Dynamic fallbacks.
 - The Rust backend currently accepts only `native + sync + edn-buffer-v1`; exports and ownership must reuse `calcit-native-ffi` without copied ABI constants or symbol templates.
 - The Calcit backend exposes a nominal client through typed trait methods; TypeScript preserves namespace-qualified declaration names; WIT stays a strict monomorphic subset with path-specific failures.
+- Component contracts default to Cirru EDN, with JSON as an explicit compatibility projection. Reuse `validate`, `generate`, and `check`; do not add parallel top-level commands.
+- Component packaging validates the core module before writes and runs non-skippable Number/String smokes through both Wasmtime and jco.
 - `generate` and `check` must use the same explicit backend set, and the ownership manifest records that set.
 - Include generated Rust at the consumer crate root and connect business logic through the generated typed service trait and package export macro.
 - Replace generated output only when a valid ownership manifest marks a dedicated directory; preserve user data and fail on unmanaged files.
