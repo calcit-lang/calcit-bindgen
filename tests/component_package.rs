@@ -12,7 +12,11 @@ use wasmtime::{Engine, Store};
 const CONTRACT: &str = "tests/fixtures/component-interface.cirru";
 
 fn core_module() -> Vec<u8> {
-    wat::parse_str(
+    core_module_with_offset(1)
+}
+
+fn core_module_with_offset(offset: i32) -> Vec<u8> {
+    wat::parse_str(format!(
         r#"
         (module
           (import "host" "add-one" (func $host-add-one (param f64) (result f64)))
@@ -31,7 +35,7 @@ fn core_module() -> Vec<u8> {
             local.get $result)
           (func (export "add-one") (param $value f64) (result f64)
             local.get $value
-            f64.const 1
+            f64.const {offset}
             f64.add)
           (func (export "call-host-add-one") (param $value f64) (result f64)
             local.get $value
@@ -51,8 +55,24 @@ fn core_module() -> Vec<u8> {
             call $host-echo
             i32.const 8))
         "#,
-    )
+    ))
     .expect("compile the Canonical ABI fixture")
+}
+
+#[test]
+fn check_reports_stale_when_core_module_changes() {
+    let temporary = TempDir::new().expect("temporary workspace");
+    let core = temporary.path().join("program.wasm");
+    fs::write(&core, core_module()).expect("write core module");
+    let output = temporary.path().join("generated");
+    let contract = component_contract();
+    generate_contract_directory(&contract, Some(&core), &output, &[]).expect("package Component");
+
+    let rebuilt = temporary.path().join("rebuilt.wasm");
+    fs::write(&rebuilt, core_module_with_offset(2)).expect("write rebuilt core module");
+    let report = check_contract_directory(&contract, Some(&rebuilt), &output, &[])
+        .expect("check against rebuilt core module");
+    assert!(!report.current);
 }
 
 fn component_contract() -> InterfaceContract {
