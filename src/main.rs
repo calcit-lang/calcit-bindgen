@@ -15,7 +15,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Validate an Interface IR v2 envelope or document.
+    /// Validate a supported native or Component Interface IR contract.
     Validate { input: PathBuf },
     /// Compare two validated Interface IR v2 documents.
     Diff {
@@ -32,7 +32,7 @@ enum Command {
         /// Core WebAssembly module implementing a Component Interface IR contract.
         #[arg(long)]
         core_module: Option<PathBuf>,
-        /// Generate only selected backends; omit to generate every backend.
+        /// Select backends; native defaults to all and Component defaults to WIT.
         #[arg(long = "backend", value_enum)]
         backends: Vec<BackendArg>,
     },
@@ -44,7 +44,7 @@ enum Command {
         /// Core WebAssembly module used when the Component artifacts were generated.
         #[arg(long)]
         core_module: Option<PathBuf>,
-        /// Check only selected backends; must match the generated manifest.
+        /// Select the same backend set recorded by the generated manifest.
         #[arg(long = "backend", value_enum)]
         backends: Vec<BackendArg>,
     },
