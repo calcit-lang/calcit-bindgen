@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: calcit-lang/calcit
-          ref: 937f1621232534b32e5b26dbe7ccea9f236ccf14
+          ref: f386e3147cf1fcafed9d43799bcbfd593daa7238
           path: calcit-core
           persist-credentials: false
       - name: Generate and run a real Calcit List Component
