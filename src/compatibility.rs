@@ -4,8 +4,8 @@ use std::fmt::Debug;
 use serde::Serialize;
 
 use crate::{
-    ComponentDefinition, ComponentDocument, Declaration, Definition, DefinitionStatus, Document,
-    EnumVariant, FunctionSignature, Lowering, StructField,
+    ComponentDefinition, ComponentDirection, ComponentDocument, Declaration, Definition,
+    DefinitionStatus, Document, EnumVariant, FunctionSignature, Lowering, StructField,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -118,7 +118,17 @@ pub fn compare_component(old: &ComponentDocument, new: &ComponentDocument) -> Co
     }
     for id in new_definitions.keys() {
         if !old_definitions.contains_key(id) {
-            changes.push(additive(format!("definitions.{id}"), "added"));
+            let definition = new_definitions[id];
+            if definition.status == DefinitionStatus::Supported
+                && definition.direction == ComponentDirection::Import
+            {
+                changes.push(breaking(
+                    format!("definitions.{id}"),
+                    "added required host import",
+                ));
+            } else {
+                changes.push(additive(format!("definitions.{id}"), "added"));
+            }
         }
     }
 
@@ -157,10 +167,19 @@ fn compare_component_definition(
 ) {
     match (old.status, new.status) {
         (DefinitionStatus::Unsupported, DefinitionStatus::Unsupported) => {}
-        (DefinitionStatus::Unsupported, DefinitionStatus::Supported) => changes.push(additive(
-            format!("{path}.status"),
-            "changed from unsupported to supported",
-        )),
+        (DefinitionStatus::Unsupported, DefinitionStatus::Supported) => {
+            if new.direction == ComponentDirection::Import {
+                changes.push(breaking(
+                    format!("{path}.status"),
+                    "changed from unsupported to supported required host import",
+                ));
+            } else {
+                changes.push(additive(
+                    format!("{path}.status"),
+                    "changed from unsupported to supported",
+                ));
+            }
+        }
         (DefinitionStatus::Supported, DefinitionStatus::Unsupported) => changes.push(breaking(
             format!("{path}.status"),
             "changed from supported to unsupported",

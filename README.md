@@ -18,7 +18,7 @@ Canonical ABI adapter 由 Calcit core 定义；WIT、组件封装、manifest 和
 This repository is active experimental tooling. Native Interface IR v2
 validation, compatibility diff, canonical generate/check, and strict
 synchronous Rust, Calcit, TypeScript, and WIT backends are usable. The first
-The Component Interface IR v2 production path also packages Calcit-generated
+Component Interface IR v2 production path also packages Calcit-generated
 Bool/Buffer/Number/String, recursively homogeneous List, closed monomorphic Option/Result, monomorphic Struct records, closed monomorphic Enum variants, and Unit-result core modules as runnable WebAssembly Components. Calcit core owns
 the public versioned contract and Canonical ABI adapters; this tool owns WIT,
 component packaging, manifests, and cross-host verification. Composite types
