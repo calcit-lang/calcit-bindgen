@@ -188,10 +188,11 @@ fn render_component_signature(
 fn render_component_type(type_ir: &Type, path: &str) -> Result<&'static str, String> {
     match type_ir {
         Type::Bool => Ok("bool"),
+        Type::Buffer => Ok("list<u8>"),
         Type::Number => Ok("f64"),
         Type::String => Ok("string"),
         other => Err(format!(
-            "{path}: Component packaging currently supports only Bool, Number, and String, received {other:?}"
+            "{path}: Component packaging currently supports only Bool, Buffer, Number, and String, received {other:?}"
         )),
     }
 }

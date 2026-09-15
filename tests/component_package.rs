@@ -22,6 +22,7 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
         (module
           (import "host" "add-one" (func $host-add-one (param f64) (result f64)))
           (import "host" "bool-not" (func $host-bool-not (param i32) (result i32)))
+          (import "host" "buffer" (func $host-buffer (param i32 i32 i32)))
           (import "host" "echo" (func $host-echo (param i32 i32 i32)))
           (memory (export "memory") 1)
           (global $heap (mut i32) (i32.const 1024))
@@ -48,6 +49,20 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
           (func (export "call-host-bool-not") (param $flag i32) (result i32)
             local.get $flag
             call $host-bool-not)
+          (func (export "echo-buffer") (param $pointer i32) (param $length i32) (result i32)
+            i32.const 8
+            local.get $pointer
+            i32.store
+            i32.const 12
+            local.get $length
+            i32.store
+            i32.const 8)
+          (func (export "call-host-buffer") (param $pointer i32) (param $length i32) (result i32)
+            local.get $pointer
+            local.get $length
+            i32.const 8
+            call $host-buffer
+            i32.const 8)
           (func (export "echo-text") (param $pointer i32) (param $length i32) (result i32)
             i32.const 8
             local.get $pointer
@@ -67,7 +82,27 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
             local.get $yes
             local.get $no
             local.get $flag
-            select))
+            select)
+          (func (export "choose-buffer")
+            (param $flag i32)
+            (param $yes-pointer i32) (param $yes-length i32)
+            (param $no-pointer i32) (param $no-length i32)
+            (result i32)
+            i32.const 8
+            local.get $yes-pointer
+            local.get $no-pointer
+            local.get $flag
+            select
+            i32.store
+            i32.const 12
+            local.get $yes-length
+            local.get $no-length
+            local.get $flag
+            select
+            i32.store
+            i32.const 8)
+          (func (export "is-buffer") (param i32 i32) (result i32)
+            i32.const 1))
         "#,
     ))
     .expect("compile the Canonical ABI fixture")
@@ -94,7 +129,7 @@ fn component_contract() -> InterfaceContract {
 }
 
 #[test]
-fn packages_checks_and_runs_bool_number_and_string_component() {
+fn packages_checks_and_runs_bool_buffer_number_and_string_component() {
     let temporary = TempDir::new().expect("temporary workspace");
     let output = package_check_and_run(&component_contract(), &core_module(), temporary.path());
 
@@ -105,7 +140,7 @@ fn packages_checks_and_runs_bool_number_and_string_component() {
 
 #[test]
 #[ignore = "requires a matching Calcit core checkout"]
-fn packages_and_runs_real_calcit_bool_component() {
+fn packages_and_runs_real_calcit_buffer_component() {
     let contract_path = std::env::var("CALCIT_BINDGEN_REAL_CONTRACT")
         .expect("CALCIT_BINDGEN_REAL_CONTRACT must name the generated contract");
     let core_path = std::env::var("CALCIT_BINDGEN_REAL_CORE")
@@ -151,6 +186,11 @@ fn package_check_and_run(
         .expect("define host add-one");
     host.func_wrap("bool-not", |_store, (value,): (bool,)| Ok((!value,)))
         .expect("define host bool-not");
+    host.func_wrap("buffer", |_store, (mut value,): (Vec<u8>,)| {
+        value.reverse();
+        Ok((value,))
+    })
+    .expect("define host buffer");
     host.func_wrap("echo", |_store, (value,): (String,)| Ok((value,)))
         .expect("define host echo");
     let mut store = Store::new(&engine, ());
@@ -217,6 +257,69 @@ fn package_check_and_run(
     call_host_bool
         .post_return(&mut store)
         .expect("finish host bool false call");
+
+    let echo_buffer = instance
+        .get_typed_func::<(Vec<u8>,), (Vec<u8>,)>(&mut store, "echo-buffer")
+        .expect("typed echo-buffer export");
+    for bytes in [vec![], vec![0, 255, 17], vec![128, 0, 254, 1]] {
+        assert_eq!(
+            echo_buffer
+                .call(&mut store, (bytes.clone(),))
+                .expect("echo Buffer"),
+            (bytes,)
+        );
+        echo_buffer
+            .post_return(&mut store)
+            .expect("finish echo-buffer call");
+    }
+
+    let choose_buffer = instance
+        .get_typed_func::<(bool, Vec<u8>, Vec<u8>), (Vec<u8>,)>(&mut store, "choose-buffer")
+        .expect("typed choose-buffer export");
+    assert_eq!(
+        choose_buffer
+            .call(&mut store, (true, vec![0, 255], vec![17, 0, 128]))
+            .expect("choose Buffer true branch"),
+        (vec![0, 255],)
+    );
+    choose_buffer
+        .post_return(&mut store)
+        .expect("finish choose-buffer true call");
+    assert_eq!(
+        choose_buffer
+            .call(&mut store, (false, vec![0, 255], vec![17, 0, 128]))
+            .expect("choose Buffer false branch"),
+        (vec![17, 0, 128],)
+    );
+    choose_buffer
+        .post_return(&mut store)
+        .expect("finish choose-buffer false call");
+
+    let is_buffer = instance
+        .get_typed_func::<(Vec<u8>,), (bool,)>(&mut store, "is-buffer")
+        .expect("typed is-buffer export");
+    assert_eq!(
+        is_buffer
+            .call(&mut store, (vec![0, 255, 17],))
+            .expect("check Buffer identity"),
+        (true,)
+    );
+    is_buffer
+        .post_return(&mut store)
+        .expect("finish is-buffer call");
+
+    let call_host_buffer = instance
+        .get_typed_func::<(Vec<u8>,), (Vec<u8>,)>(&mut store, "call-host-buffer")
+        .expect("typed call-host-buffer export");
+    assert_eq!(
+        call_host_buffer
+            .call(&mut store, (vec![0, 255, 17],))
+            .expect("call host Buffer"),
+        (vec![17, 255, 0],)
+    );
+    call_host_buffer
+        .post_return(&mut store)
+        .expect("finish host Buffer call");
 
     let choose_number = instance
         .get_typed_func::<(bool, f64, f64), (f64,)>(&mut store, "choose-number")
