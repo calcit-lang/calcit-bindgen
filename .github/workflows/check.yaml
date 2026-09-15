@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: calcit-lang/calcit
-          ref: d69d0c98132ede0d8672133085f46f4b3e56fa6a
+          ref: d1bd7b1755d5b2fdef24cf1a329d3ae295c29acf
           path: calcit-core
           persist-credentials: false
       - name: Generate and run a real Calcit Option/Result Component
