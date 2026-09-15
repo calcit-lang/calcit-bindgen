@@ -15,6 +15,11 @@ const api = await instantiate(undefined, {
     numbers: (value) => Float64Array.from(value).reverse(),
     optionNumber: (value) => value,
     ping: () => undefined,
+    profile: (value) => ({
+      ...value,
+      active: !value.active,
+      stats: { score: value.stats.score + 1 },
+    }),
     resultNumber: (value) => {
       if (value.tag === "ok") return value.val;
       throw { payload: value.val };
@@ -131,4 +136,48 @@ if (api.ping() !== undefined || api.callHostPing() !== undefined) {
   throw new Error("jco Unit smoke failed");
 }
 
-console.log("jco Option/Result, recursive List, and scalar smoke passed");
+const profile = {
+  active: true,
+  maybeName: "Ada",
+  name: "Ada",
+  outcome: { tag: "ok", val: Float64Array.of(4, 5) },
+  scores: Float64Array.of(1, 2, 3),
+  stats: { score: 7.5 },
+};
+const expectProfile = (actual, expected, label) => {
+  const normalizeResultValue = (value) => ArrayBuffer.isView(value) ? Array.from(value) : value;
+  if (
+    actual.active !== expected.active ||
+    actual.maybeName !== expected.maybeName ||
+    actual.name !== expected.name ||
+    actual.outcome.tag !== expected.outcome.tag ||
+    JSON.stringify(normalizeResultValue(actual.outcome.val)) !== JSON.stringify(normalizeResultValue(expected.outcome.val)) ||
+    actual.stats.score !== expected.stats.score ||
+    JSON.stringify(Array.from(actual.scores)) !== JSON.stringify(Array.from(expected.scores))
+  ) {
+    throw new Error(`${label}: got ${JSON.stringify(actual)}`);
+  }
+};
+expectProfile(api.echoProfile(profile), profile, "jco Struct record export smoke failed");
+expectProfile(
+  api.callHostProfile(profile),
+  { ...profile, active: false, stats: { score: 8.5 } },
+  "jco Struct record import smoke failed",
+);
+const alternateProfile = {
+  ...profile,
+  maybeName: undefined,
+  outcome: { tag: "err", val: "bad" },
+};
+expectProfile(
+  api.echoProfile(alternateProfile),
+  alternateProfile,
+  "jco Struct record None/Err export smoke failed",
+);
+expectProfile(
+  api.callHostProfile(alternateProfile),
+  { ...alternateProfile, active: false, stats: { score: 8.5 } },
+  "jco Struct record None/Err import smoke failed",
+);
+
+console.log("jco Struct, Option/Result, recursive List, and scalar smoke passed");

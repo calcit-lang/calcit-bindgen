@@ -7,10 +7,28 @@ use calcit_bindgen::{
     check_contract_directory, generate_contract_directory, load_contract,
 };
 use tempfile::TempDir;
-use wasmtime::component::{Component, Linker};
+use wasmtime::component::{Component, ComponentType, Lift, Linker, Lower};
 use wasmtime::{Engine, Store};
 
 const CONTRACT: &str = "tests/fixtures/component-interface.cirru";
+
+#[derive(Clone, Debug, PartialEq, ComponentType, Lift, Lower)]
+#[component(record)]
+struct ProfileStats {
+    score: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, ComponentType, Lift, Lower)]
+#[component(record)]
+struct Profile {
+    active: bool,
+    #[component(name = "maybe-name")]
+    maybe_name: Option<String>,
+    name: String,
+    outcome: Result<Vec<f64>, String>,
+    scores: Vec<f64>,
+    stats: ProfileStats,
+}
 
 fn core_module() -> Vec<u8> {
     core_module_with_offset(1)
@@ -170,7 +188,7 @@ fn packages_checks_and_runs_recursive_list_and_scalar_component() {
 
 #[test]
 #[ignore = "requires a matching Calcit core checkout"]
-fn packages_and_runs_real_calcit_option_result_component() {
+fn packages_and_runs_real_calcit_struct_component() {
     let contract_path = std::env::var("CALCIT_BINDGEN_REAL_CONTRACT")
         .expect("CALCIT_BINDGEN_REAL_CONTRACT must name the generated contract");
     let core_path = std::env::var("CALCIT_BINDGEN_REAL_CORE")
@@ -193,6 +211,10 @@ fn package_check_and_run(
         .definitions
         .iter()
         .any(|definition| definition.symbol == "echo-option-number"));
+    let has_structs = matches!(contract, InterfaceContract::Component(document) if document
+        .definitions
+        .iter()
+        .any(|definition| definition.symbol == "echo-profile"));
     let core = temporary.join("program.wasm");
     fs::write(&core, core_module).expect("write core module");
     let output = temporary.join("generated");
@@ -217,6 +239,15 @@ fn package_check_and_run(
             wit.contains("echo-result-unit: func(arg0: result<_, string>) -> result<_, string>;")
         );
         assert!(wit.contains("ping: func();"));
+    }
+    if has_structs {
+        assert!(wit.contains("record component-wasm-main-profile {"));
+        assert!(wit.contains("record component-wasm-main-profile-stats {"));
+        assert!(wit.contains("maybe-name: option<string>,"));
+        assert!(wit.contains("outcome: result<list<f64>, string>,"));
+        assert!(wit.contains(
+            "echo-profile: func(arg0: component-wasm-main-profile) -> component-wasm-main-profile;"
+        ));
     }
     assert!(
         check_contract_directory(contract, Some(&core), &output, &[])
@@ -258,6 +289,14 @@ fn package_check_and_run(
         .expect("define host result-number");
         host.func_wrap("ping", |_store, (): ()| Ok(()))
             .expect("define host ping");
+    }
+    if has_structs {
+        host.func_wrap("profile", |_store, (mut value,): (Profile,)| {
+            value.active = !value.active;
+            value.stats.score += 1.0;
+            Ok((value,))
+        })
+        .expect("define host profile");
     }
     let mut store = Store::new(&engine, ());
     let instance = linker
@@ -453,6 +492,75 @@ fn package_check_and_run(
         call_host_ping
             .post_return(&mut store)
             .expect("finish host Unit call");
+    }
+
+    if has_structs {
+        let profile = Profile {
+            active: true,
+            maybe_name: Some("Ada".to_owned()),
+            name: "Ada".to_owned(),
+            outcome: Ok(vec![4.0, 5.0]),
+            scores: vec![1.0, 2.0, 3.0],
+            stats: ProfileStats { score: 7.5 },
+        };
+        let echo_profile = instance
+            .get_typed_func::<(Profile,), (Profile,)>(&mut store, "echo-profile")
+            .expect("typed echo-profile export");
+        assert_eq!(
+            echo_profile
+                .call(&mut store, (profile.clone(),))
+                .expect("echo Struct record"),
+            (profile.clone(),)
+        );
+        echo_profile
+            .post_return(&mut store)
+            .expect("finish Struct record call");
+
+        let call_host_profile = instance
+            .get_typed_func::<(Profile,), (Profile,)>(&mut store, "call-host-profile")
+            .expect("typed call-host-profile export");
+        let mut expected = profile.clone();
+        expected.active = false;
+        expected.stats.score = 8.5;
+        assert_eq!(
+            call_host_profile
+                .call(&mut store, (profile,))
+                .expect("call host Struct record"),
+            (expected,)
+        );
+        call_host_profile
+            .post_return(&mut store)
+            .expect("finish host Struct record call");
+
+        let alternate_profile = Profile {
+            active: true,
+            maybe_name: None,
+            name: "Ada".to_owned(),
+            outcome: Err("bad".to_owned()),
+            scores: vec![1.0, 2.0, 3.0],
+            stats: ProfileStats { score: 7.5 },
+        };
+        assert_eq!(
+            echo_profile
+                .call(&mut store, (alternate_profile.clone(),))
+                .expect("echo Struct record with None and Err"),
+            (alternate_profile.clone(),)
+        );
+        echo_profile
+            .post_return(&mut store)
+            .expect("finish alternate Struct record call");
+        let mut alternate_expected = alternate_profile.clone();
+        alternate_expected.active = false;
+        alternate_expected.stats.score = 8.5;
+        assert_eq!(
+            call_host_profile
+                .call(&mut store, (alternate_profile,))
+                .expect("call host Struct record with None and Err"),
+            (alternate_expected,)
+        );
+        call_host_profile
+            .post_return(&mut store)
+            .expect("finish alternate host Struct record call");
     }
 
     let echo_buffer = instance
