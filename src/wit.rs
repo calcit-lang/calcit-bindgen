@@ -178,11 +178,13 @@ fn render_component_signature(
         })
         .collect::<Result<Vec<_>, String>>()?
         .join(", ");
-    let result = render_component_type(
-        &signature.result,
-        &format!("definitions.{definition_id}.signature.result"),
-    )?;
-    Ok(format!("func({parameters}) -> {result}"))
+    let result_path = format!("definitions.{definition_id}.signature.result");
+    if matches!(signature.result, Type::Unit) {
+        Ok(format!("func({parameters})"))
+    } else {
+        let result = render_component_type(&signature.result, &result_path)?;
+        Ok(format!("func({parameters}) -> {result}"))
+    }
 }
 
 fn render_component_type(type_ir: &Type, path: &str) -> Result<String, String> {
@@ -194,10 +196,32 @@ fn render_component_type(type_ir: &Type, path: &str) -> Result<String, String> {
             render_component_type(item, &format!("{path}.item"))?
         )),
         Type::Number => Ok("f64".to_owned()),
+        Type::Option { item } => Ok(format!(
+            "option<{}>",
+            render_component_type(item, &format!("{path}.item"))?
+        )),
+        Type::Result { ok, error } => {
+            let ok = render_component_variant_payload(ok, &format!("{path}.ok"))?;
+            let error = render_component_variant_payload(error, &format!("{path}.error"))?;
+            Ok(match (ok, error) {
+                (None, None) => "result".to_owned(),
+                (Some(ok), None) => format!("result<{ok}>"),
+                (None, Some(error)) => format!("result<_, {error}>"),
+                (Some(ok), Some(error)) => format!("result<{ok}, {error}>"),
+            })
+        }
         Type::String => Ok("string".to_owned()),
         other => Err(format!(
-            "{path}: Component packaging currently supports only Bool, Buffer, recursive List<T>, Number, and String, received {other:?}"
+            "{path}: Component packaging currently supports only Unit results, Bool, Buffer, recursive List<T>, Number, Option<T>, Result<T, E>, and String, received {other:?}"
         )),
+    }
+}
+
+fn render_component_variant_payload(type_ir: &Type, path: &str) -> Result<Option<String>, String> {
+    if matches!(type_ir, Type::Unit) {
+        Ok(None)
+    } else {
+        render_component_type(type_ir, path).map(Some)
     }
 }
 
@@ -360,7 +384,7 @@ mod tests {
     use crate::Type;
 
     #[test]
-    fn component_type_rendering_is_recursive_and_keeps_item_paths() {
+    fn component_type_rendering_is_recursive_and_keeps_payload_paths() {
         let nested = Type::List {
             item: Box::new(Type::List {
                 item: Box::new(Type::Number),
@@ -379,5 +403,26 @@ mod tests {
         let error = render_component_type(&unsupported, "definitions.demo.signature.result")
             .expect_err("nested Unit must not degrade to a Dynamic WIT type");
         assert!(error.contains("definitions.demo.signature.result.item.item"));
+
+        let result = Type::Result {
+            ok: Box::new(Type::List {
+                item: Box::new(Type::Number),
+            }),
+            error: Box::new(Type::String),
+        };
+        assert_eq!(
+            render_component_type(&result, "definitions.demo.signature.result"),
+            Ok("result<list<f64>, string>".to_owned())
+        );
+
+        let unsupported = Type::Option {
+            item: Box::new(Type::Struct {
+                id: "demo/Person".to_owned(),
+                arguments: vec![],
+            }),
+        };
+        let error = render_component_type(&unsupported, "definitions.demo.signature.result")
+            .expect_err("unsupported Option payload must keep its schema path");
+        assert!(error.contains("definitions.demo.signature.result.item"));
     }
 }
