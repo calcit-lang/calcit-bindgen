@@ -237,8 +237,18 @@ fn render_component_type(
                 format!("{path}: missing Component Interface IR Struct declaration {id}")
             })
         }
+        Type::Enum { id, arguments } => {
+            if !arguments.is_empty() {
+                return Err(format!(
+                    "{path}: generic Enum application {id} is not representable in Component WIT"
+                ));
+            }
+            names.declarations.get(id).cloned().ok_or_else(|| {
+                format!("{path}: missing Component Interface IR Enum declaration {id}")
+            })
+        }
         other => Err(format!(
-            "{path}: Component packaging currently supports only Unit results, Bool, Buffer, recursive List<T>, Number, Option<T>, Result<T, E>, String, and monomorphic Struct records, received {other:?}"
+            "{path}: Component packaging currently supports only Unit results, Bool, Buffer, recursive List<T>, Number, Option<T>, Result<T, E>, String, monomorphic Struct records, and closed monomorphic Enum variants, received {other:?}"
         )),
     }
 }
@@ -264,25 +274,17 @@ impl ComponentWitNames {
         let mut declarations = BTreeMap::new();
         let mut seen = BTreeMap::new();
         for declaration in &document.declarations {
-            let Declaration::Struct {
-                id,
-                type_parameters,
-                ..
-            } = declaration
-            else {
-                return Err(format!(
-                    "declarations.{}: general Enum variants are not yet supported by Component packaging",
-                    declaration.id()
-                ));
-            };
+            let id = declaration.id();
+            let type_parameters = declaration.type_parameters();
             if !type_parameters.is_empty() {
                 return Err(format!(
-                    "declarations.{id}.type_parameters: generic Struct declarations are not representable in Component WIT"
+                    "declarations.{id}.type_parameters: generic {} declarations are not representable in Component WIT",
+                    declaration.kind()
                 ));
             }
             let wit_name = kebab(id)?;
             insert_unique(&mut seen, &wit_name, id, "Component WIT declaration")?;
-            declarations.insert(id.clone(), wit_name);
+            declarations.insert(id.to_owned(), wit_name);
         }
         Ok(Self { declarations })
     }
@@ -296,27 +298,67 @@ fn render_component_declarations(
     let mut declarations = document.declarations.iter().collect::<Vec<_>>();
     declarations.sort_by(|left, right| left.id().cmp(right.id()));
     for declaration in declarations {
-        let Declaration::Struct { id, fields, .. } = declaration else {
-            unreachable!("ComponentWitNames rejects non-Struct declarations")
-        };
-        writeln!(output, "  record {} {{", names.declarations[id]).expect("write to String");
-        let mut seen = BTreeMap::new();
-        for (index, field) in fields.iter().enumerate() {
-            let path = format!("declarations.{id}.fields[{index}]");
-            let field_name = exact_component_name(&field.name, &format!("{path}.name"))?;
-            insert_unique(
-                &mut seen,
-                &field_name,
-                &format!("{id}.{}", field.name),
-                "Component WIT field",
-            )?;
-            if matches!(field.type_ir, Type::Unit) {
-                return Err(format!(
-                    "{path}.type: Unit is not a representable Component WIT record field"
-                ));
+        match declaration {
+            Declaration::Struct { id, fields, .. } => {
+                writeln!(output, "  record {} {{", names.declarations[id])
+                    .expect("write to String");
+                let mut seen = BTreeMap::new();
+                for (index, field) in fields.iter().enumerate() {
+                    let path = format!("declarations.{id}.fields[{index}]");
+                    let field_name = exact_component_name(&field.name, &format!("{path}.name"))?;
+                    insert_unique(
+                        &mut seen,
+                        &field_name,
+                        &format!("{id}.{}", field.name),
+                        "Component WIT field",
+                    )?;
+                    if matches!(field.type_ir, Type::Unit) {
+                        return Err(format!(
+                            "{path}.type: Unit is not a representable Component WIT record field"
+                        ));
+                    }
+                    let value =
+                        render_component_type(&field.type_ir, names, &format!("{path}.type"))?;
+                    writeln!(output, "    {field_name}: {value},").expect("write to String");
+                }
             }
-            let value = render_component_type(&field.type_ir, names, &format!("{path}.type"))?;
-            writeln!(output, "    {field_name}: {value},").expect("write to String");
+            Declaration::Enum { id, variants, .. } => {
+                writeln!(output, "  variant {} {{", names.declarations[id])
+                    .expect("write to String");
+                let mut seen = BTreeMap::new();
+                for (index, variant) in variants.iter().enumerate() {
+                    let path = format!("declarations.{id}.variants[{index}]");
+                    let case_name = exact_component_name(&variant.name, &format!("{path}.name"))?;
+                    insert_unique(
+                        &mut seen,
+                        &case_name,
+                        &format!("{id}.{}", variant.name),
+                        "Component WIT variant",
+                    )?;
+                    let payload = variant
+                        .payload
+                        .iter()
+                        .enumerate()
+                        .map(|(payload_index, value)| {
+                            let payload_path = format!("{path}.payload[{payload_index}]");
+                            if matches!(value, Type::Unit) {
+                                return Err(format!(
+                                    "{payload_path}: Unit is not a representable Component WIT variant payload; omit the payload instead"
+                                ));
+                            }
+                            render_component_type(value, names, &payload_path)
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    match payload.as_slice() {
+                        [] => writeln!(output, "    {case_name},"),
+                        [value] => writeln!(output, "    {case_name}({value}),"),
+                        values => {
+                            writeln!(output, "    {case_name}(tuple<{}>),", values.join(", "))
+                        }
+                    }
+                    .expect("write to String");
+                }
+            }
         }
         output.push_str("  }\n");
     }
@@ -505,7 +547,7 @@ mod tests {
     use super::{ComponentWitNames, render_component, render_component_type};
     use crate::{
         ComponentDefinition, ComponentDirection, ComponentDocument, Declaration, DefinitionStatus,
-        FunctionSignature, Parameter, StructField, Type,
+        EnumVariant, FunctionSignature, Parameter, StructField, Type,
     };
 
     #[test]
@@ -629,5 +671,93 @@ mod tests {
         wit_parser::Resolve::default()
             .push_str("component-struct.wit", &wit)
             .expect("generated Component Struct WIT must parse");
+    }
+
+    #[test]
+    fn component_enums_render_closed_ordered_variants() {
+        let event_type = Type::Enum {
+            id: "app.main/Event".to_owned(),
+            arguments: vec![],
+        };
+        let document = ComponentDocument {
+            version: 1,
+            package: "demo".to_owned(),
+            package_version: "0.0.0".to_owned(),
+            declarations: vec![
+                Declaration::Enum {
+                    id: "app.main/Event".to_owned(),
+                    namespace: "app.main".to_owned(),
+                    name: "Event".to_owned(),
+                    type_parameters: vec![],
+                    variants: vec![
+                        EnumVariant {
+                            name: "idle".to_owned(),
+                            payload: vec![],
+                        },
+                        EnumVariant {
+                            name: "moved".to_owned(),
+                            payload: vec![Type::Number, Type::Number],
+                        },
+                        EnumVariant {
+                            name: "named".to_owned(),
+                            payload: vec![Type::String],
+                        },
+                        EnumVariant {
+                            name: "profile".to_owned(),
+                            payload: vec![Type::Struct {
+                                id: "app.main/Profile".to_owned(),
+                                arguments: vec![],
+                            }],
+                        },
+                    ],
+                },
+                Declaration::Struct {
+                    id: "app.main/Profile".to_owned(),
+                    namespace: "app.main".to_owned(),
+                    name: "Profile".to_owned(),
+                    type_parameters: vec![],
+                    fields: vec![StructField {
+                        name: "name".to_owned(),
+                        type_ir: Type::String,
+                    }],
+                },
+            ],
+            definitions: vec![ComponentDefinition {
+                id: "app.main/echo-event".to_owned(),
+                namespace: "app.main".to_owned(),
+                name: "echo-event".to_owned(),
+                doc: String::new(),
+                logical_schema: String::new(),
+                direction: ComponentDirection::Export,
+                module: None,
+                symbol: "echo-event".to_owned(),
+                signature: Some(FunctionSignature {
+                    parameters: vec![Parameter {
+                        position: 0,
+                        type_ir: event_type.clone(),
+                    }],
+                    result: event_type,
+                }),
+                status: DefinitionStatus::Supported,
+                diagnostic_codes: vec![],
+            }],
+        };
+        let wit = render_component(&document).expect("render Component Enum WIT");
+        assert!(wit.contains(
+            "variant app-main-event {\n    idle,\n    moved(tuple<f64, f64>),\n    named(string),\n    profile(app-main-profile),\n  }"
+        ));
+        assert!(wit.contains("echo-event: func(arg0: app-main-event) -> app-main-event;"));
+        wit_parser::Resolve::default()
+            .push_str("component-enum.wit", &wit)
+            .expect("generated Component Enum WIT must parse");
+
+        let mut invalid = document;
+        let Declaration::Enum { variants, .. } = &mut invalid.declarations[0] else {
+            unreachable!("test declaration is an Enum")
+        };
+        variants[1].payload[0] = Type::Unit;
+        let error = render_component(&invalid).expect_err("Unit Enum payload must fail");
+        assert!(error.contains("declarations.app.main/Event.variants[1].payload[0]"));
+        assert!(error.contains("omit the payload"));
     }
 }

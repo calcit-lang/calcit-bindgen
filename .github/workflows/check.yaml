@@ -31,15 +31,15 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
-      - name: Check out the matching Calcit Struct adapters
+      - name: Check out the matching Calcit Enum adapters
         if: matrix.os == 'ubuntu-latest'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: calcit-lang/calcit
-          ref: 6cd1eb5981db76e3032670856bf67cda4c9d87f6
+          ref: 3c53e0246ba883c84e33e2959b3011df30689233
           path: calcit-core
           persist-credentials: false
-      - name: Generate and run a real Calcit Struct Component
+      - name: Generate and run a real Calcit Enum Component
         if: matrix.os == 'ubuntu-latest'
         run: |
           cargo build --manifest-path calcit-core/Cargo.toml --bin calcit
@@ -48,7 +48,7 @@ jobs:
           CALCIT_BINDGEN_REAL_CONTRACT="$RUNNER_TEMP/component-interface.cirru" \
             CALCIT_BINDGEN_REAL_CORE="$RUNNER_TEMP/component-core/program.wasm" \
             CALCIT_BINDGEN_COMPONENT_OUTPUT="$RUNNER_TEMP/calcit-component.wasm" \
-            cargo test --test component_package packages_and_runs_real_calcit_struct_component -- --ignored --exact
+            cargo test --test component_package packages_and_runs_real_calcit_enum_component -- --ignored --exact
       - name: Transpile and run Component with jco
         if: matrix.os == 'ubuntu-latest'
         run: |

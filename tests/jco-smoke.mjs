@@ -12,6 +12,7 @@ const api = await instantiate(undefined, {
     boolNot: (value) => !value,
     buffer: (value) => Uint8Array.from(value).reverse(),
     echo: (value) => value,
+    event: (value) => value,
     numbers: (value) => Float64Array.from(value).reverse(),
     optionNumber: (value) => value,
     ping: () => undefined,
@@ -180,4 +181,27 @@ expectProfile(
   "jco Struct record None/Err import smoke failed",
 );
 
-console.log("jco Struct, Option/Result, recursive List, and scalar smoke passed");
+const expectEvent = (actual, expected, label) => {
+  if (actual.tag !== expected.tag) {
+    throw new Error(`${label}: got tag ${actual.tag}, expected ${expected.tag}`);
+  }
+  if (expected.tag === "idle") return;
+  if (expected.tag === "profile") {
+    expectProfile(actual.val, expected.val, label);
+    return;
+  }
+  if (JSON.stringify(actual.val) !== JSON.stringify(expected.val)) {
+    throw new Error(`${label}: got ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`);
+  }
+};
+for (const event of [
+  { tag: "idle" },
+  { tag: "moved", val: [3, 4] },
+  { tag: "named", val: "Ada" },
+  { tag: "profile", val: profile },
+]) {
+  expectEvent(api.echoEvent(event), event, "jco Enum export smoke failed");
+  expectEvent(api.callHostEvent(event), event, "jco Enum import smoke failed");
+}
+
+console.log("jco Enum, Struct, Option/Result, recursive List, and scalar smoke passed");

@@ -30,6 +30,19 @@ struct Profile {
     stats: ProfileStats,
 }
 
+#[derive(Clone, Debug, PartialEq, ComponentType, Lift, Lower)]
+#[component(variant)]
+enum Event {
+    #[component(name = "idle")]
+    Idle,
+    #[component(name = "moved")]
+    Moved((f64, f64)),
+    #[component(name = "named")]
+    Named(String),
+    #[component(name = "profile")]
+    Profile(Profile),
+}
+
 fn core_module() -> Vec<u8> {
     core_module_with_offset(1)
 }
@@ -188,7 +201,7 @@ fn packages_checks_and_runs_recursive_list_and_scalar_component() {
 
 #[test]
 #[ignore = "requires a matching Calcit core checkout"]
-fn packages_and_runs_real_calcit_struct_component() {
+fn packages_and_runs_real_calcit_enum_component() {
     let contract_path = std::env::var("CALCIT_BINDGEN_REAL_CONTRACT")
         .expect("CALCIT_BINDGEN_REAL_CONTRACT must name the generated contract");
     let core_path = std::env::var("CALCIT_BINDGEN_REAL_CORE")
@@ -215,6 +228,10 @@ fn package_check_and_run(
         .definitions
         .iter()
         .any(|definition| definition.symbol == "echo-profile"));
+    let has_enums = matches!(contract, InterfaceContract::Component(document) if document
+        .definitions
+        .iter()
+        .any(|definition| definition.symbol == "echo-event"));
     let core = temporary.join("program.wasm");
     fs::write(&core, core_module).expect("write core module");
     let output = temporary.join("generated");
@@ -247,6 +264,16 @@ fn package_check_and_run(
         assert!(wit.contains("outcome: result<list<f64>, string>,"));
         assert!(wit.contains(
             "echo-profile: func(arg0: component-wasm-main-profile) -> component-wasm-main-profile;"
+        ));
+    }
+    if has_enums {
+        assert!(wit.contains("variant component-wasm-main-event {"));
+        assert!(wit.contains("    idle,"));
+        assert!(wit.contains("    moved(tuple<f64, f64>),"));
+        assert!(wit.contains("    named(string),"));
+        assert!(wit.contains("    profile(component-wasm-main-profile),"));
+        assert!(wit.contains(
+            "echo-event: func(arg0: component-wasm-main-event) -> component-wasm-main-event;"
         ));
     }
     assert!(
@@ -297,6 +324,10 @@ fn package_check_and_run(
             Ok((value,))
         })
         .expect("define host profile");
+    }
+    if has_enums {
+        host.func_wrap("event", |_store, (value,): (Event,)| Ok((value,)))
+            .expect("define host event");
     }
     let mut store = Store::new(&engine, ());
     let instance = linker
@@ -561,6 +592,49 @@ fn package_check_and_run(
         call_host_profile
             .post_return(&mut store)
             .expect("finish alternate host Struct record call");
+    }
+
+    if has_enums {
+        let profile = Profile {
+            active: true,
+            maybe_name: Some("Ada".to_owned()),
+            name: "Ada".to_owned(),
+            outcome: Ok(vec![4.0, 5.0]),
+            scores: vec![1.0, 2.0, 3.0],
+            stats: ProfileStats { score: 7.5 },
+        };
+        let events = [
+            Event::Idle,
+            Event::Moved((3.0, 4.0)),
+            Event::Named("Ada".to_owned()),
+            Event::Profile(profile),
+        ];
+        let echo_event = instance
+            .get_typed_func::<(Event,), (Event,)>(&mut store, "echo-event")
+            .expect("typed echo-event export");
+        let call_host_event = instance
+            .get_typed_func::<(Event,), (Event,)>(&mut store, "call-host-event")
+            .expect("typed call-host-event export");
+        for event in events {
+            assert_eq!(
+                echo_event
+                    .call(&mut store, (event.clone(),))
+                    .expect("echo Enum variant"),
+                (event.clone(),)
+            );
+            echo_event
+                .post_return(&mut store)
+                .expect("finish Enum export call");
+            assert_eq!(
+                call_host_event
+                    .call(&mut store, (event.clone(),))
+                    .expect("call host Enum variant"),
+                (event,)
+            );
+            call_host_event
+                .post_return(&mut store)
+                .expect("finish host Enum call");
+        }
     }
 
     let echo_buffer = instance
