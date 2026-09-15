@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: calcit-lang/calcit
-          ref: fbd766802d2b1b01769864bb1fbe823299b12b8f
+          ref: 6cd1eb5981db76e3032670856bf67cda4c9d87f6
           path: calcit-core
           persist-credentials: false
       - name: Generate and run a real Calcit Struct Component
