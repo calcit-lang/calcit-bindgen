@@ -170,7 +170,7 @@ fn packages_checks_and_runs_recursive_list_and_scalar_component() {
 
 #[test]
 #[ignore = "requires a matching Calcit core checkout"]
-fn packages_and_runs_real_calcit_list_component() {
+fn packages_and_runs_real_calcit_option_result_component() {
     let contract_path = std::env::var("CALCIT_BINDGEN_REAL_CONTRACT")
         .expect("CALCIT_BINDGEN_REAL_CONTRACT must name the generated contract");
     let core_path = std::env::var("CALCIT_BINDGEN_REAL_CORE")
@@ -189,6 +189,10 @@ fn package_check_and_run(
     core_module: &[u8],
     temporary: &Path,
 ) -> PathBuf {
+    let has_variants = matches!(contract, InterfaceContract::Component(document) if document
+        .definitions
+        .iter()
+        .any(|definition| definition.symbol == "echo-option-number"));
     let core = temporary.join("program.wasm");
     fs::write(&core, core_module).expect("write core module");
     let output = temporary.join("generated");
@@ -204,6 +208,16 @@ fn package_check_and_run(
         fs::read_to_string(output.join(WIT_BINDINGS_FILE)).expect("read generated Component WIT");
     assert!(wit.contains("echo-buffers: func(arg0: list<list<u8>>) -> list<list<u8>>;"));
     assert!(wit.contains("echo-number-lists: func(arg0: list<list<f64>>) -> list<list<f64>>;"));
+    if has_variants {
+        assert!(wit.contains("echo-option-number: func(arg0: option<f64>) -> option<f64>;"));
+        assert!(wit.contains(
+            "echo-result-number: func(arg0: result<f64, string>) -> result<f64, string>;"
+        ));
+        assert!(
+            wit.contains("echo-result-unit: func(arg0: result<_, string>) -> result<_, string>;")
+        );
+        assert!(wit.contains("ping: func();"));
+    }
     assert!(
         check_contract_directory(contract, Some(&core), &output, &[])
             .expect("check generated Component")
@@ -232,6 +246,19 @@ fn package_check_and_run(
         Ok((value,))
     })
     .expect("define host numbers");
+    if has_variants {
+        host.func_wrap("option-number", |_store, (value,): (Option<f64>,)| {
+            Ok((value,))
+        })
+        .expect("define host option-number");
+        host.func_wrap(
+            "result-number",
+            |_store, (value,): (Result<f64, String>,)| Ok((value,)),
+        )
+        .expect("define host result-number");
+        host.func_wrap("ping", |_store, (): ()| Ok(()))
+            .expect("define host ping");
+    }
     let mut store = Store::new(&engine, ());
     let instance = linker
         .instantiate(&mut store, &component)
@@ -296,6 +323,137 @@ fn package_check_and_run(
     call_host_bool
         .post_return(&mut store)
         .expect("finish host bool false call");
+
+    if has_variants {
+        let echo_option_number = instance
+            .get_typed_func::<(Option<f64>,), (Option<f64>,)>(&mut store, "echo-option-number")
+            .expect("typed echo-option-number export");
+        for value in [None, Some(7.5)] {
+            assert_eq!(
+                echo_option_number
+                    .call(&mut store, (value,))
+                    .expect("echo Option<Number>"),
+                (value,)
+            );
+            echo_option_number
+                .post_return(&mut store)
+                .expect("finish Option<Number> call");
+        }
+
+        let echo_option_text = instance
+            .get_typed_func::<(Option<String>,), (Option<String>,)>(&mut store, "echo-option-text")
+            .expect("typed echo-option-text export");
+        for value in [None, Some("你好".to_owned())] {
+            assert_eq!(
+                echo_option_text
+                    .call(&mut store, (value.clone(),))
+                    .expect("echo Option<String>"),
+                (value,)
+            );
+            echo_option_text
+                .post_return(&mut store)
+                .expect("finish Option<String> call");
+        }
+
+        let echo_result_number = instance
+            .get_typed_func::<(Result<f64, String>,), (Result<f64, String>,)>(
+                &mut store,
+                "echo-result-number",
+            )
+            .expect("typed echo-result-number export");
+        for value in [Ok(9.25), Err("bad".to_owned())] {
+            assert_eq!(
+                echo_result_number
+                    .call(&mut store, (value.clone(),))
+                    .expect("echo Result<Number,String>"),
+                (value,)
+            );
+            echo_result_number
+                .post_return(&mut store)
+                .expect("finish Result<Number,String> call");
+        }
+
+        let echo_result_unit = instance
+            .get_typed_func::<(Result<(), String>,), (Result<(), String>,)>(
+                &mut store,
+                "echo-result-unit",
+            )
+            .expect("typed echo-result-unit export");
+        for value in [Ok(()), Err("bad".to_owned())] {
+            assert_eq!(
+                echo_result_unit
+                    .call(&mut store, (value.clone(),))
+                    .expect("echo Result<Unit,String>"),
+                (value,)
+            );
+            echo_result_unit
+                .post_return(&mut store)
+                .expect("finish Result<Unit,String> call");
+        }
+
+        let echo_result_numbers = instance
+            .get_typed_func::<(Result<Vec<f64>, String>,), (Result<Vec<f64>, String>,)>(
+                &mut store,
+                "echo-result-numbers",
+            )
+            .expect("typed echo-result-numbers export");
+        for value in [Ok(vec![]), Ok(vec![2.0, 4.0, 8.0]), Err("bad".to_owned())] {
+            assert_eq!(
+                echo_result_numbers
+                    .call(&mut store, (value.clone(),))
+                    .expect("echo Result<List<Number>,String>"),
+                (value,)
+            );
+            echo_result_numbers
+                .post_return(&mut store)
+                .expect("finish Result<List<Number>,String> call");
+        }
+
+        let call_host_option = instance
+            .get_typed_func::<(Option<f64>,), (Option<f64>,)>(&mut store, "call-host-option-number")
+            .expect("typed call-host-option-number export");
+        assert_eq!(
+            call_host_option
+                .call(&mut store, (Some(12.5),))
+                .expect("call host Option<Number>"),
+            (Some(12.5),)
+        );
+        call_host_option
+            .post_return(&mut store)
+            .expect("finish host Option<Number> call");
+
+        let call_host_result = instance
+            .get_typed_func::<(Result<f64, String>,), (Result<f64, String>,)>(
+                &mut store,
+                "call-host-result-number",
+            )
+            .expect("typed call-host-result-number export");
+        for value in [Ok(6.5), Err("bad".to_owned())] {
+            assert_eq!(
+                call_host_result
+                    .call(&mut store, (value.clone(),))
+                    .expect("call host Result<Number,String>"),
+                (value,)
+            );
+            call_host_result
+                .post_return(&mut store)
+                .expect("finish host Result<Number,String> call");
+        }
+
+        let ping = instance
+            .get_typed_func::<(), ()>(&mut store, "ping")
+            .expect("typed ping export");
+        ping.call(&mut store, ()).expect("call Unit export");
+        ping.post_return(&mut store).expect("finish Unit export");
+
+        let call_host_ping = instance
+            .get_typed_func::<(), ()>(&mut store, "call-host-ping")
+            .expect("typed call-host-ping export");
+        call_host_ping.call(&mut store, ()).expect("call host Unit");
+        call_host_ping
+            .post_return(&mut store)
+            .expect("finish host Unit call");
+    }
 
     let echo_buffer = instance
         .get_typed_func::<(Vec<u8>,), (Vec<u8>,)>(&mut store, "echo-buffer")

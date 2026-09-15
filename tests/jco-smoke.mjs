@@ -13,6 +13,12 @@ const api = await instantiate(undefined, {
     buffer: (value) => Uint8Array.from(value).reverse(),
     echo: (value) => value,
     numbers: (value) => Float64Array.from(value).reverse(),
+    optionNumber: (value) => value,
+    ping: () => undefined,
+    resultNumber: (value) => {
+      if (value.tag === "ok") return value.val;
+      throw { payload: value.val };
+    },
   },
 });
 
@@ -69,4 +75,60 @@ expectList(nested[0], [1, 2], "jco nested Number List item 0 failed");
 expectList(nested[1], [], "jco nested Number List item 1 failed");
 expectList(nested[2], [-3, 4.5, 7], "jco nested Number List item 2 failed");
 
-console.log("jco recursive List and scalar smoke passed");
+if (api.echoOptionNumber(undefined) !== undefined || api.echoOptionNumber(7.5) !== 7.5) {
+  throw new Error("jco Option<Number> smoke failed");
+}
+if (api.echoOptionText(undefined) !== undefined || api.echoOptionText("你好") !== "你好") {
+  throw new Error("jco Option<String> smoke failed");
+}
+if (api.callHostOptionNumber(undefined) !== undefined || api.callHostOptionNumber(12.5) !== 12.5) {
+  throw new Error("jco host Option<Number> smoke failed");
+}
+const expectResultError = (invoke, expected, label) => {
+  try {
+    invoke();
+  } catch (error) {
+    if (error?.payload === expected) return;
+    throw new Error(label + ": unexpected error " + error);
+  }
+  throw new Error(label + ": expected an error payload");
+};
+if (api.echoResultNumber({ tag: "ok", val: 9.25 }) !== 9.25) {
+  throw new Error("jco Result<Number,String> ok smoke failed");
+}
+expectResultError(
+  () => api.echoResultNumber({ tag: "err", val: "bad" }),
+  "bad",
+  "jco Result<Number,String> err smoke failed",
+);
+if (api.echoResultUnit({ tag: "ok", val: undefined }) !== undefined) {
+  throw new Error("jco Result<Unit,String> ok smoke failed");
+}
+expectResultError(
+  () => api.echoResultUnit({ tag: "err", val: "bad" }),
+  "bad",
+  "jco Result<Unit,String> err smoke failed",
+);
+expectList(
+  api.echoResultNumbers({ tag: "ok", val: Float64Array.of(2, 4, 8) }),
+  [2, 4, 8],
+  "jco Result<List<Number>,String> ok smoke failed",
+);
+expectResultError(
+  () => api.echoResultNumbers({ tag: "err", val: "bad" }),
+  "bad",
+  "jco Result<List<Number>,String> err smoke failed",
+);
+if (api.callHostResultNumber({ tag: "ok", val: 6.5 }) !== 6.5) {
+  throw new Error("jco host Result<Number,String> ok smoke failed");
+}
+expectResultError(
+  () => api.callHostResultNumber({ tag: "err", val: "bad" }),
+  "bad",
+  "jco host Result<Number,String> err smoke failed",
+);
+if (api.ping() !== undefined || api.callHostPing() !== undefined) {
+  throw new Error("jco Unit smoke failed");
+}
+
+console.log("jco Option/Result, recursive List, and scalar smoke passed");
