@@ -1,12 +1,76 @@
 {} (:command |ffi.export)
-  :interface-schema |https://calcit-lang.org/schemas/component-interface-ir-v1.schema.json
-  :revision |md5:1faa5380579098a2d0660ca73f4dd529
+  :interface-schema |https://calcit-lang.org/schemas/component-interface-ir-v2.schema.json
+  :revision |md5:343883a6d4a954ac1c1c08d7b66d70f5
   :schema-version 1
   :data $ {}
     :filters $ {} (:boundary |component) (:include-dependencies false) (:namespace nil)
-    :interface $ {} (:package |component-wasm) (:package-version |0.0.0) (:version 1)
-      :declarations $ []
+    :interface $ {} (:package |component-wasm) (:package-version |0.0.0) (:version 2)
+      :declarations $ [] $ {} (:id |component-wasm.main/NumericScalars) (:kind |struct) (:name |NumericScalars) (:namespace |component-wasm.main)
+        :fields $ []
+          {} (:name |f32)
+            :type $ {} $ :kind |float32
+          {} (:name |f64)
+            :type $ {} $ :kind |float64
+          {} (:name |i16)
+            :type $ {} $ :kind |int16
+          {} (:name |i32)
+            :type $ {} $ :kind |int32
+          {} (:name |i64)
+            :type $ {} $ :kind |int64
+          {} (:name |i8)
+            :type $ {} $ :kind |int8
+          {} (:name |u16)
+            :type $ {} $ :kind |uint16
+          {} (:name |u32)
+            :type $ {} $ :kind |uint32
+          {} (:name |u64)
+            :type $ {} $ :kind |uint64
+          {} (:name |u8)
+            :type $ {} $ :kind |uint8
+        :type-parameters $ []
       :definitions $ []
+        {} (:direction |export) (:doc |) (:id |component-wasm.main/call-host-numeric-scalars)
+          :logical-schema "|(:: 'Fn ({} (:args ([] 'component-wasm.main/NumericScalars)) (:return 'component-wasm.main/NumericScalars)))"
+          :module nil
+          :name |call-host-numeric-scalars
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |call-host-numeric-scalars
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:id |component-wasm.main/NumericScalars) (:kind |struct)
+                :arguments $ []
+            :result $ {} (:id |component-wasm.main/NumericScalars) (:kind |struct)
+              :arguments $ []
+        {} (:direction |export) (:doc |) (:id |component-wasm.main/echo-numeric-scalars)
+          :logical-schema "|(:: 'Fn ({} (:args ([] 'component-wasm.main/NumericScalars)) (:return 'component-wasm.main/NumericScalars)))"
+          :module nil
+          :name |echo-numeric-scalars
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |echo-numeric-scalars
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:id |component-wasm.main/NumericScalars) (:kind |struct)
+                :arguments $ []
+            :result $ {} (:id |component-wasm.main/NumericScalars) (:kind |struct)
+              :arguments $ []
+        {} (:direction |import) (:doc |) (:id |component-wasm.main/host-numeric-scalars)
+          :logical-schema "|(:: 'Fn ({} (:args ([] 'component-wasm.main/NumericScalars)) (:return 'component-wasm.main/NumericScalars)))"
+          :module |host
+          :name |host-numeric-scalars
+          :namespace |component-wasm.main
+          :status |supported
+          :symbol |numeric-scalars
+          :diagnostic-codes $ []
+          :signature $ {}
+            :parameters $ [] $ {} (:position 0)
+              :type $ {} (:id |component-wasm.main/NumericScalars) (:kind |struct)
+                :arguments $ []
+            :result $ {} (:id |component-wasm.main/NumericScalars) (:kind |struct)
+              :arguments $ []
         {} (:direction |export) (:doc |) (:id |component-wasm.main/add-one)
           :logical-schema "|(:: 'Fn ({} (:args ([] 'Number)) (:return 'Number)))"
           :module nil
@@ -297,5 +361,5 @@
             :parameters $ [] $ {} (:position 0)
               :type $ {} $ :kind |buffer
             :result $ {} $ :kind |bool
-    :summary $ {} (:definitions 22) (:diagnostics 0) (:supported 22) (:unsupported 0)
+    :summary $ {} (:definitions 25) (:diagnostics 0) (:supported 25) (:unsupported 0)
   :diagnostics $ []

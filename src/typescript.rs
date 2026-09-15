@@ -187,6 +187,16 @@ fn render_type(type_ir: &Type, names: &TypeScriptNames, path: &str) -> Result<St
         Type::Unit => Ok("void".to_owned()),
         Type::Bool => Ok("boolean".to_owned()),
         Type::Number => Ok("number".to_owned()),
+        Type::Int8
+        | Type::Uint8
+        | Type::Int16
+        | Type::Uint16
+        | Type::Int32
+        | Type::Uint32
+        | Type::Int64
+        | Type::Uint64
+        | Type::Float32
+        | Type::Float64 => Ok("number".to_owned()),
         Type::String => Ok("string".to_owned()),
         Type::Buffer => Ok("Uint8Array".to_owned()),
         Type::List { item } => Ok(format!(

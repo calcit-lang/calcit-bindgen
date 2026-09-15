@@ -1,7 +1,8 @@
 use calcit_bindgen::{
-    ChangeKind, Declaration, Definition, DefinitionStatus, Document, FunctionSignature,
-    InterfaceContract, Lowering, Parameter, StructField, Type, compare, load_contract,
-    load_document, validate_document,
+    ChangeKind, ComponentDocument, Declaration, Definition, DefinitionStatus, Document,
+    FunctionSignature, InterfaceContract, Lowering, Parameter, StructField, Type, compare,
+    compare_component, load_contract, load_document, validate_component_document,
+    validate_document,
 };
 use std::fs;
 use std::process::Command;
@@ -71,10 +72,15 @@ fn loads_default_cirru_edn_component_contract() {
     let InterfaceContract::Component(document) = contract else {
         panic!("expected a Component contract");
     };
-    assert_eq!(document.version, 1);
+    assert_eq!(document.version, 2);
     assert_eq!(document.package, "component-wasm");
-    assert_eq!(document.definitions.len(), 22);
-    assert_eq!(document.definitions[0].symbol, "add-one");
+    assert_eq!(document.definitions.len(), 25);
+    assert!(
+        document
+            .definitions
+            .iter()
+            .any(|definition| definition.symbol == "add-one")
+    );
     assert!(document.definitions.iter().any(|definition| {
         definition.symbol == "echo-buffer"
             && definition.signature.as_ref().is_some_and(|signature| {
@@ -101,6 +107,130 @@ fn loads_default_cirru_edn_component_contract() {
 }
 
 #[test]
+fn component_compatibility_tracks_numeric_widths() {
+    let InterfaceContract::Component(old) =
+        load_contract("tests/fixtures/component-interface.cirru").expect("load Component contract")
+    else {
+        panic!("expected a Component contract");
+    };
+    let mut new = old.clone();
+    let declaration = new
+        .declarations
+        .iter_mut()
+        .find(|declaration| declaration.id() == "component-wasm.main/NumericScalars")
+        .expect("numeric Struct declaration");
+    let Declaration::Struct { fields, .. } = declaration else {
+        panic!("expected numeric Struct");
+    };
+    fields
+        .iter_mut()
+        .find(|field| field.name == "u16")
+        .expect("u16 field")
+        .type_ir = Type::Uint32;
+
+    let report = compare_component(&old, &new);
+    assert!(!report.compatible);
+    assert!(report.changes.iter().any(|change| {
+        change.path.contains("NumericScalars.fields")
+            && change.message.contains("Uint16")
+            && change.message.contains("Uint32")
+    }));
+}
+
+fn write_component_envelope(path: &std::path::Path, document: &ComponentDocument) {
+    let diagnostics = Vec::<serde_json::Value>::new();
+    let revision = format!(
+        "md5:{:x}",
+        md5::compute(serde_json::to_vec(&(document, &diagnostics)).expect("revision input"))
+    );
+    let definitions = document.definitions.len();
+    let envelope = serde_json::json!({
+        "schema_version": 1,
+        "interface_schema": "https://calcit-lang.org/schemas/component-interface-ir-v2.schema.json",
+        "command": "ffi.export",
+        "revision": revision,
+        "data": {
+            "filters": {
+                "boundary": "component",
+                "namespace": null,
+                "include_dependencies": false
+            },
+            "interface": document,
+            "summary": {
+                "definitions": definitions,
+                "supported": definitions,
+                "unsupported": 0,
+                "diagnostics": 0
+            }
+        },
+        "diagnostics": diagnostics
+    });
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(&envelope).expect("encode Component envelope"),
+    )
+    .expect("write Component envelope");
+}
+
+#[test]
+fn diff_cli_reports_component_numeric_width_changes() {
+    let InterfaceContract::Component(old) =
+        load_contract("tests/fixtures/component-interface.cirru").expect("load Component contract")
+    else {
+        panic!("expected a Component contract");
+    };
+    let mut new = old.clone();
+    let definition = new
+        .definitions
+        .iter_mut()
+        .find(|definition| definition.symbol == "echo-numeric-scalars")
+        .expect("numeric export");
+    definition
+        .signature
+        .as_mut()
+        .expect("numeric signature")
+        .result = Type::Float64;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let old_path = directory.path().join("old.json");
+    let new_path = directory.path().join("new.json");
+    write_component_envelope(&old_path, &old);
+    write_component_envelope(&new_path, &new);
+    let output = Command::new(env!("CARGO_BIN_EXE_calcit-bindgen"))
+        .args([
+            "diff",
+            old_path.to_str().expect("old path"),
+            new_path.to_str().expect("new path"),
+            "--json",
+        ])
+        .output()
+        .expect("run Component diff");
+    assert!(!output.status.success());
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("Component diff report");
+    assert_eq!(report["compatible"], false);
+    assert_eq!(
+        report["changes"][0]["path"],
+        "definitions.component-wasm.main/echo-numeric-scalars.signature.result"
+    );
+}
+
+#[test]
+fn rejects_old_component_contract_versions() {
+    let InterfaceContract::Component(mut document) =
+        load_contract("tests/fixtures/component-interface.cirru").expect("load Component contract")
+    else {
+        panic!("expected a Component contract");
+    };
+    document.version = 1;
+    assert!(
+        validate_component_document(&document)
+            .unwrap_err()
+            .contains("requires v2")
+    );
+}
+
+#[test]
 fn loads_explicit_json_component_projection() {
     let InterfaceContract::Component(document) =
         load_contract("tests/fixtures/component-interface.cirru").expect("load EDN contract")
@@ -115,7 +245,7 @@ fn loads_explicit_json_component_projection() {
     let definitions = document.definitions.len();
     let envelope = serde_json::json!({
         "schema_version": 1,
-        "interface_schema": "https://calcit-lang.org/schemas/component-interface-ir-v1.schema.json",
+        "interface_schema": "https://calcit-lang.org/schemas/component-interface-ir-v2.schema.json",
         "command": "ffi.export",
         "revision": revision,
         "data": {
@@ -313,6 +443,18 @@ fn rejects_unknown_versions_and_missing_declarations() {
         validate_document(&missing)
             .unwrap_err()
             .contains("missing declaration demo/Person")
+    );
+
+    let mut component_only_numeric = document();
+    component_only_numeric.definitions[0]
+        .signature
+        .as_mut()
+        .expect("signature")
+        .result = Type::Int32;
+    assert!(
+        validate_document(&component_only_numeric)
+            .unwrap_err()
+            .contains("require Component Interface IR v2")
     );
 }
 

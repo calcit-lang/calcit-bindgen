@@ -11,7 +11,7 @@ mod typescript;
 mod validate;
 mod wit;
 
-pub use compatibility::{Change, ChangeKind, CompatibilityReport, compare};
+pub use compatibility::{Change, ChangeKind, CompatibilityReport, compare, compare_component};
 pub use generate::{
     ArtifactDigest, CALCIT_BINDINGS_FILE, COMPONENT_FILE, CheckIssue, CheckIssueKind, CheckReport,
     ContractKind, GenerationBackend, INTERFACE_FILE, MANIFEST_FILE, Manifest, RUST_BINDINGS_FILE,
