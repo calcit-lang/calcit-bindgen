@@ -19,7 +19,7 @@ This repository is active experimental tooling. Native Interface IR v2
 validation, compatibility diff, canonical generate/check, and strict
 synchronous Rust, Calcit, TypeScript, and WIT backends are usable. The first
 Component Interface IR v1 production slice also packages Calcit-generated
-Bool/Buffer/Number/String, recursively homogeneous List, closed monomorphic Option/Result, monomorphic Struct records, and Unit-result core modules as runnable WebAssembly Components. Calcit core owns
+Bool/Buffer/Number/String, recursively homogeneous List, closed monomorphic Option/Result, monomorphic Struct records, closed monomorphic Enum variants, and Unit-result core modules as runnable WebAssembly Components. Calcit core owns
 the public versioned contract and Canonical ABI adapters; this tool owns WIT,
 component packaging, manifests, and cross-host verification. Composite types
 and broader real-module migration remain tracked by calcit-bindgen#5.
@@ -70,7 +70,7 @@ calcit project/calcit.cirru ffi export --boundary component --format json \
   > component-interface.json
 ```
 
-Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String、递归同质 `List<T>`、闭合单态 `Option<T>` / `Result<T,E>`、单态 Struct record 与 Unit 结果，并产生规范化
+Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String、递归同质 `List<T>`、闭合单态 `Option<T>` / `Result<T,E>`、单态 Struct record、闭合单态 Enum variant 与 Unit 结果，并产生规范化
 `interface.json`、`wit/interface.wit`、`component/component.wasm` 与 ownership manifest。
 manifest 同时记录 contract digest、core module digest 和三个 managed artifacts。
 输入 core module 的 import/export、memory、`cabi_realloc` 或 Canonical ABI 签名不匹配时，
@@ -196,7 +196,7 @@ missing, modified, stale-manifest, and unexpected artifacts separately for CI.
 
 Component contracts reuse the same `validate`, `generate`, and `check` entry
 points. Generation additionally requires `--core-module <program.wasm>` and
-currently accepts monomorphic Bool/Buffer/Number/String, recursively homogeneous `List<T>`, closed Option/Result, monomorphic Struct records, and Unit-result definitions. It
+currently accepts monomorphic Bool/Buffer/Number/String, recursively homogeneous `List<T>`, closed Option/Result, monomorphic Struct records, closed monomorphic Enum variants, and Unit-result definitions. It
 emits canonical
 `interface.json`, `wit/interface.wit`, a runnable `component/component.wasm`,
 and a manifest containing both contract and core-module digests. Core imports,
