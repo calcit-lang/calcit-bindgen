@@ -4,8 +4,8 @@ use std::fmt::Debug;
 use serde::Serialize;
 
 use crate::{
-    Declaration, Definition, DefinitionStatus, Document, EnumVariant, FunctionSignature, Lowering,
-    StructField,
+    ComponentDefinition, ComponentDirection, ComponentDocument, Declaration, Definition,
+    DefinitionStatus, Document, EnumVariant, FunctionSignature, Lowering, StructField,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -42,34 +42,7 @@ pub fn compare(old: &Document, new: &Document) -> CompatibilityReport {
         ));
     }
 
-    let old_declarations = index_unique(
-        "old",
-        "declarations",
-        &old.declarations,
-        |item| item.id(),
-        &mut changes,
-    );
-    let new_declarations = index_unique(
-        "new",
-        "declarations",
-        &new.declarations,
-        |item| item.id(),
-        &mut changes,
-    );
-    for (id, old_declaration) in &old_declarations {
-        let path = format!("declarations.{id}");
-        match new_declarations.get(id) {
-            None => changes.push(breaking(path, "removed")),
-            Some(new_declaration) => {
-                compare_declaration(&path, old_declaration, new_declaration, &mut changes)
-            }
-        }
-    }
-    for id in new_declarations.keys() {
-        if !old_declarations.contains_key(id) {
-            changes.push(additive(format!("declarations.{id}"), "added"));
-        }
-    }
+    compare_declarations(&old.declarations, &new.declarations, &mut changes);
 
     let old_definitions = index_unique(
         "old",
@@ -105,6 +78,135 @@ pub fn compare(old: &Document, new: &Document) -> CompatibilityReport {
             .iter()
             .any(|change| change.kind == ChangeKind::Breaking),
         changes,
+    }
+}
+
+/// Compare two public Component Interface IR contracts.
+pub fn compare_component(old: &ComponentDocument, new: &ComponentDocument) -> CompatibilityReport {
+    let mut changes = Vec::new();
+    if old.package != new.package {
+        changes.push(breaking(
+            "package",
+            format!("changed from {:?} to {:?}", old.package, new.package),
+        ));
+    }
+
+    compare_declarations(&old.declarations, &new.declarations, &mut changes);
+
+    let old_definitions = index_unique(
+        "old",
+        "definitions",
+        &old.definitions,
+        |item| item.id.as_str(),
+        &mut changes,
+    );
+    let new_definitions = index_unique(
+        "new",
+        "definitions",
+        &new.definitions,
+        |item| item.id.as_str(),
+        &mut changes,
+    );
+    for (id, old_definition) in &old_definitions {
+        let path = format!("definitions.{id}");
+        match new_definitions.get(id) {
+            None => changes.push(breaking(path, "removed")),
+            Some(new_definition) => {
+                compare_component_definition(&path, old_definition, new_definition, &mut changes)
+            }
+        }
+    }
+    for id in new_definitions.keys() {
+        if !old_definitions.contains_key(id) {
+            let definition = new_definitions[id];
+            if definition.status == DefinitionStatus::Supported
+                && definition.direction == ComponentDirection::Import
+            {
+                changes.push(breaking(
+                    format!("definitions.{id}"),
+                    "added required host import",
+                ));
+            } else {
+                changes.push(additive(format!("definitions.{id}"), "added"));
+            }
+        }
+    }
+
+    CompatibilityReport {
+        compatible: !changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::Breaking),
+        changes,
+    }
+}
+
+fn compare_declarations(old: &[Declaration], new: &[Declaration], changes: &mut Vec<Change>) {
+    let old_declarations = index_unique("old", "declarations", old, |item| item.id(), changes);
+    let new_declarations = index_unique("new", "declarations", new, |item| item.id(), changes);
+    for (id, old_declaration) in &old_declarations {
+        let path = format!("declarations.{id}");
+        match new_declarations.get(id) {
+            None => changes.push(breaking(path, "removed")),
+            Some(new_declaration) => {
+                compare_declaration(&path, old_declaration, new_declaration, changes)
+            }
+        }
+    }
+    for id in new_declarations.keys() {
+        if !old_declarations.contains_key(id) {
+            changes.push(additive(format!("declarations.{id}"), "added"));
+        }
+    }
+}
+
+fn compare_component_definition(
+    path: &str,
+    old: &ComponentDefinition,
+    new: &ComponentDefinition,
+    changes: &mut Vec<Change>,
+) {
+    match (old.status, new.status) {
+        (DefinitionStatus::Unsupported, DefinitionStatus::Unsupported) => {}
+        (DefinitionStatus::Unsupported, DefinitionStatus::Supported) => {
+            if new.direction == ComponentDirection::Import {
+                changes.push(breaking(
+                    format!("{path}.status"),
+                    "changed from unsupported to supported required host import",
+                ));
+            } else {
+                changes.push(additive(
+                    format!("{path}.status"),
+                    "changed from unsupported to supported",
+                ));
+            }
+        }
+        (DefinitionStatus::Supported, DefinitionStatus::Unsupported) => changes.push(breaking(
+            format!("{path}.status"),
+            "changed from supported to unsupported",
+        )),
+        (DefinitionStatus::Supported, DefinitionStatus::Supported) => {
+            compare_value(
+                format!("{path}.namespace"),
+                &old.namespace,
+                &new.namespace,
+                changes,
+            );
+            compare_value(format!("{path}.name"), &old.name, &new.name, changes);
+            compare_value(
+                format!("{path}.direction"),
+                &old.direction,
+                &new.direction,
+                changes,
+            );
+            compare_value(format!("{path}.module"), &old.module, &new.module, changes);
+            compare_value(format!("{path}.symbol"), &old.symbol, &new.symbol, changes);
+            compare_signature(
+                path,
+                old.signature.as_ref(),
+                new.signature.as_ref(),
+                changes,
+            );
+        }
     }
 }
 

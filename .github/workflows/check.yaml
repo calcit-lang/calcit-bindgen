@@ -31,15 +31,15 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
-      - name: Check out the matching Calcit Enum adapters
+      - name: Check out the matching Calcit numeric adapters
         if: matrix.os == 'ubuntu-latest'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: calcit-lang/calcit
-          ref: 3c53e0246ba883c84e33e2959b3011df30689233
+          ref: c5c5dbf0acd44e1295ca005f7e7dbcb134cfa123
           path: calcit-core
           persist-credentials: false
-      - name: Generate and run a real Calcit Enum Component
+      - name: Generate and run a real Calcit numeric Component
         if: matrix.os == 'ubuntu-latest'
         run: |
           cargo build --manifest-path calcit-core/Cargo.toml --bin calcit

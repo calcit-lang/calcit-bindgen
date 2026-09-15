@@ -212,6 +212,16 @@ fn render_component_type(
             render_component_type(item, names, &format!("{path}.item"))?
         )),
         Type::Number => Ok("f64".to_owned()),
+        Type::Int8 => Ok("s8".to_owned()),
+        Type::Uint8 => Ok("u8".to_owned()),
+        Type::Int16 => Ok("s16".to_owned()),
+        Type::Uint16 => Ok("u16".to_owned()),
+        Type::Int32 => Ok("s32".to_owned()),
+        Type::Uint32 => Ok("u32".to_owned()),
+        Type::Int64 => Ok("s64".to_owned()),
+        Type::Uint64 => Ok("u64".to_owned()),
+        Type::Float32 => Ok("f32".to_owned()),
+        Type::Float64 => Ok("f64".to_owned()),
         Type::Option { item } => Ok(format!(
             "option<{}>",
             render_component_type(item, names, &format!("{path}.item"))?
@@ -282,7 +292,7 @@ impl ComponentWitNames {
                     declaration.kind()
                 ));
             }
-            let wit_name = kebab(id)?;
+            let wit_name = escape_wit_keyword(kebab(id)?);
             insert_unique(&mut seen, &wit_name, id, "Component WIT declaration")?;
             declarations.insert(id.to_owned(), wit_name);
         }
@@ -394,7 +404,61 @@ fn exact_component_name(value: &str, path: &str) -> Result<String, String> {
             "{path}: Component ABI name {value:?} is not a canonical WIT identifier; refusing to rewrite binding identity as {wit_name:?}"
         ));
     }
-    Ok(wit_name)
+    Ok(escape_wit_keyword(wit_name))
+}
+
+fn escape_wit_keyword(value: String) -> String {
+    if matches!(
+        value.as_str(),
+        "use"
+            | "type"
+            | "func"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "s8"
+            | "s16"
+            | "s32"
+            | "s64"
+            | "f32"
+            | "f64"
+            | "char"
+            | "record"
+            | "resource"
+            | "own"
+            | "borrow"
+            | "flags"
+            | "variant"
+            | "enum"
+            | "bool"
+            | "string"
+            | "option"
+            | "result"
+            | "future"
+            | "stream"
+            | "error-context"
+            | "list"
+            | "map"
+            | "_"
+            | "as"
+            | "from"
+            | "static"
+            | "interface"
+            | "tuple"
+            | "import"
+            | "export"
+            | "world"
+            | "package"
+            | "constructor"
+            | "include"
+            | "with"
+            | "async"
+    ) {
+        format!("%{value}")
+    } else {
+        value
+    }
 }
 
 struct WitNames {
@@ -497,6 +561,16 @@ fn render_type(type_ir: &Type, names: &WitNames, path: &str) -> Result<Option<St
         Type::Unit => Ok(None),
         Type::Bool => Ok(Some("bool".to_owned())),
         Type::Number => Ok(Some("f64".to_owned())),
+        Type::Int8 => Ok(Some("s8".to_owned())),
+        Type::Uint8 => Ok(Some("u8".to_owned())),
+        Type::Int16 => Ok(Some("s16".to_owned())),
+        Type::Uint16 => Ok(Some("u16".to_owned())),
+        Type::Int32 => Ok(Some("s32".to_owned())),
+        Type::Uint32 => Ok(Some("u32".to_owned())),
+        Type::Int64 => Ok(Some("s64".to_owned())),
+        Type::Uint64 => Ok(Some("u64".to_owned())),
+        Type::Float32 => Ok(Some("f32".to_owned())),
+        Type::Float64 => Ok(Some("f64".to_owned())),
         Type::String => Ok(Some("string".to_owned())),
         Type::Buffer => Ok(Some("list<u8>".to_owned())),
         Type::List { item } => Ok(Some(format!(
@@ -586,6 +660,38 @@ mod tests {
             Ok("result<list<f64>, string>".to_owned())
         );
 
+        let numeric = Type::Result {
+            ok: Box::new(Type::List {
+                item: Box::new(Type::Uint16),
+            }),
+            error: Box::new(Type::Option {
+                item: Box::new(Type::Float32),
+            }),
+        };
+        assert_eq!(
+            render_component_type(&numeric, &names, "definitions.demo.signature.result"),
+            Ok("result<list<u16>, option<f32>>".to_owned())
+        );
+
+        let scalar_cases = [
+            (Type::Int8, "s8"),
+            (Type::Uint8, "u8"),
+            (Type::Int16, "s16"),
+            (Type::Uint16, "u16"),
+            (Type::Int32, "s32"),
+            (Type::Uint32, "u32"),
+            (Type::Int64, "s64"),
+            (Type::Uint64, "u64"),
+            (Type::Float32, "f32"),
+            (Type::Float64, "f64"),
+        ];
+        for (type_ir, expected) in scalar_cases {
+            assert_eq!(
+                render_component_type(&type_ir, &names, "definitions.demo.signature.result"),
+                Ok(expected.to_owned())
+            );
+        }
+
         let unsupported = Type::Option {
             item: Box::new(Type::Struct {
                 id: "demo/Person".to_owned(),
@@ -605,7 +711,7 @@ mod tests {
             arguments: vec![],
         };
         let document = ComponentDocument {
-            version: 1,
+            version: 2,
             package: "demo".to_owned(),
             package_version: "0.0.0".to_owned(),
             declarations: vec![Declaration::Struct {
@@ -680,7 +786,7 @@ mod tests {
             arguments: vec![],
         };
         let document = ComponentDocument {
-            version: 1,
+            version: 2,
             package: "demo".to_owned(),
             package_version: "0.0.0".to_owned(),
             declarations: vec![

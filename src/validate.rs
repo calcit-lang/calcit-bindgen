@@ -11,8 +11,8 @@ use crate::{
 
 const FFI_INTERFACE_IR_V2_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json";
-const COMPONENT_INTERFACE_IR_V1_SCHEMA_ID: &str =
-    "https://calcit-lang.org/schemas/component-interface-ir-v1.schema.json";
+const COMPONENT_INTERFACE_IR_V2_SCHEMA_ID: &str =
+    "https://calcit-lang.org/schemas/component-interface-ir-v2.schema.json";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,7 +94,7 @@ pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     match load_contract(path)? {
         InterfaceContract::Native(document) => Ok(document),
         InterfaceContract::Component(_) => {
-            Err("expected native Interface IR v2, received Component Interface IR v1".to_owned())
+            Err("expected native Interface IR v2, received Component Interface IR v2".to_owned())
         }
     }
 }
@@ -109,7 +109,7 @@ pub fn load_contract(path: impl AsRef<Path>) -> Result<InterfaceContract, String
             .get("interface_schema")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "ffi.export envelope must declare interface_schema".to_owned())?;
-        if schema == COMPONENT_INTERFACE_IR_V1_SCHEMA_ID {
+        if schema == COMPONENT_INTERFACE_IR_V2_SCHEMA_ID {
             let envelope: ComponentExportEnvelope = serde_json::from_value(value)
                 .map_err(|error| format!("invalid Component ffi.export envelope: {error}"))?;
             validate_component_export_envelope(&envelope)?;
@@ -288,9 +288,9 @@ fn validate_component_export_envelope(envelope: &ComponentExportEnvelope) -> Res
             envelope.command, envelope.schema_version
         ));
     }
-    if envelope.interface_schema != COMPONENT_INTERFACE_IR_V1_SCHEMA_ID {
+    if envelope.interface_schema != COMPONENT_INTERFACE_IR_V2_SCHEMA_ID {
         return Err(format!(
-            "expected Component Interface IR schema {COMPONENT_INTERFACE_IR_V1_SCHEMA_ID:?}, received {:?}",
+            "expected Component Interface IR schema {COMPONENT_INTERFACE_IR_V2_SCHEMA_ID:?}, received {:?}",
             envelope.interface_schema
         ));
     }
@@ -426,13 +426,13 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
         match declaration {
             Declaration::Struct { fields, .. } => {
                 for field in fields {
-                    validate_type(&field.type_ir, &declarations, &parameters, true)?;
+                    validate_type(&field.type_ir, &declarations, &parameters, true, false)?;
                 }
             }
             Declaration::Enum { variants, .. } => {
                 for variant in variants {
                     for item in &variant.payload {
-                        validate_type(item, &declarations, &parameters, true)?;
+                        validate_type(item, &declarations, &parameters, true, false)?;
                     }
                 }
             }
@@ -462,9 +462,9 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
                             definition.id
                         ));
                     }
-                    validate_type(&parameter.type_ir, &declarations, &none, false)?;
+                    validate_type(&parameter.type_ir, &declarations, &none, false, false)?;
                 }
-                validate_type(&signature.result, &declarations, &none, false)?;
+                validate_type(&signature.result, &declarations, &none, false, false)?;
             }
             (DefinitionStatus::Unsupported, Some(_)) | (DefinitionStatus::Unsupported, None) => {}
         }
@@ -473,9 +473,9 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
 }
 
 pub fn validate_component_document(document: &ComponentDocument) -> Result<(), String> {
-    if document.version != 1 {
+    if document.version != 2 {
         return Err(format!(
-            "unsupported Component Interface IR version {}; calcit-bindgen requires v1",
+            "unsupported Component Interface IR version {}; calcit-bindgen requires v2",
             document.version
         ));
     }
@@ -508,13 +508,13 @@ pub fn validate_component_document(document: &ComponentDocument) -> Result<(), S
         match declaration {
             Declaration::Struct { fields, .. } => {
                 for field in fields {
-                    validate_type(&field.type_ir, &declarations, &parameters, true)?;
+                    validate_type(&field.type_ir, &declarations, &parameters, true, true)?;
                 }
             }
             Declaration::Enum { variants, .. } => {
                 for variant in variants {
                     for item in &variant.payload {
-                        validate_type(item, &declarations, &parameters, true)?;
+                        validate_type(item, &declarations, &parameters, true, true)?;
                     }
                 }
             }
@@ -586,9 +586,9 @@ pub fn validate_component_document(document: &ComponentDocument) -> Result<(), S
                             definition.id
                         ));
                     }
-                    validate_type(&parameter.type_ir, &declarations, &none, false)?;
+                    validate_type(&parameter.type_ir, &declarations, &none, false, true)?;
                 }
-                validate_type(&signature.result, &declarations, &none, false)?;
+                validate_type(&signature.result, &declarations, &none, false, true)?;
             }
             (DefinitionStatus::Unsupported, Some(_)) | (DefinitionStatus::Unsupported, None) => {}
         }
@@ -601,15 +601,58 @@ fn validate_type(
     declarations: &BTreeMap<&str, &Declaration>,
     parameters: &BTreeSet<String>,
     allow_parameter: bool,
+    allow_numeric_refinements: bool,
 ) -> Result<(), String> {
     match type_ir {
         Type::Unit | Type::Bool | Type::Number | Type::String | Type::Buffer => Ok(()),
-        Type::List { item } | Type::Option { item } => {
-            validate_type(item, declarations, parameters, allow_parameter)
+        Type::Int8
+        | Type::Uint8
+        | Type::Int16
+        | Type::Uint16
+        | Type::Int32
+        | Type::Uint32
+        | Type::Int64
+        | Type::Uint64
+        | Type::Float32
+        | Type::Float64
+            if allow_numeric_refinements =>
+        {
+            Ok(())
         }
+        Type::Int8
+        | Type::Uint8
+        | Type::Int16
+        | Type::Uint16
+        | Type::Int32
+        | Type::Uint32
+        | Type::Int64
+        | Type::Uint64
+        | Type::Float32
+        | Type::Float64 => {
+            Err("explicit numeric refinements require Component Interface IR v2".to_owned())
+        }
+        Type::List { item } | Type::Option { item } => validate_type(
+            item,
+            declarations,
+            parameters,
+            allow_parameter,
+            allow_numeric_refinements,
+        ),
         Type::Result { ok, error } => {
-            validate_type(ok, declarations, parameters, allow_parameter)?;
-            validate_type(error, declarations, parameters, allow_parameter)
+            validate_type(
+                ok,
+                declarations,
+                parameters,
+                allow_parameter,
+                allow_numeric_refinements,
+            )?;
+            validate_type(
+                error,
+                declarations,
+                parameters,
+                allow_parameter,
+                allow_numeric_refinements,
+            )
         }
         Type::Struct { id, arguments } | Type::Enum { id, arguments } => {
             let declaration = declarations
@@ -634,7 +677,13 @@ fn validate_type(
                 ));
             }
             for argument in arguments {
-                validate_type(argument, declarations, parameters, allow_parameter)?;
+                validate_type(
+                    argument,
+                    declarations,
+                    parameters,
+                    allow_parameter,
+                    allow_numeric_refinements,
+                )?;
             }
             Ok(())
         }

@@ -9,7 +9,7 @@ Interface IR.
 
 本仓库处于 **active development / experimental tooling** 阶段。native Interface IR v2 的
 validation、compatibility diff、canonical generate/check 与严格同步 Rust、Calcit、TypeScript、WIT
-backends 已可用；Component Interface IR v1 的第一段 production 路径也可将 Calcit 生成的
+backends 已可用；Component Interface IR v2 的 production 路径也可将 Calcit 生成的
 Bool/Buffer/Number/String、递归同质 List、闭合单态 Option/Result、单态 Struct record 及 Unit 结果的 core module 打包为可运行 WebAssembly Component。公开、版本化的 Interface IR 和
 Canonical ABI adapter 由 Calcit core 定义；WIT、组件封装、manifest 和多宿主验证由本工具负责。
 更完整的复合类型支持与真实生态迁移仍由
@@ -18,7 +18,7 @@ Canonical ABI adapter 由 Calcit core 定义；WIT、组件封装、manifest 和
 This repository is active experimental tooling. Native Interface IR v2
 validation, compatibility diff, canonical generate/check, and strict
 synchronous Rust, Calcit, TypeScript, and WIT backends are usable. The first
-Component Interface IR v1 production slice also packages Calcit-generated
+Component Interface IR v2 production path also packages Calcit-generated
 Bool/Buffer/Number/String, recursively homogeneous List, closed monomorphic Option/Result, monomorphic Struct records, closed monomorphic Enum variants, and Unit-result core modules as runnable WebAssembly Components. Calcit core owns
 the public versioned contract and Canonical ABI adapters; this tool owns WIT,
 component packaging, manifests, and cross-host verification. Composite types
@@ -111,9 +111,9 @@ Calcit backend 生成 nominal `FfiClient`、带静态签名的 trait 和 impl；
 `client .method` 使用绑定，不直接保存 native symbol 字符串。TypeScript declaration 名使用完整
 namespace-qualified declaration ID 派生，避免不同 namespace 的同名 nominal declaration 被折叠。
 WIT 将 Calcit Buffer 严格映射为 `list<u8>`，将 Calcit Number 映射为当前 Component Model
-的 `f64`，从闭合 item schema 递归生成 `list<T>`，并从同一类型树生成 `option<T>` 与 `result<T,E>`。单态 Struct declaration 生成 namespace-qualified named record；闭合单态 Enum 生成 namespace-qualified WIT variant，无、单个和多个 payload 分别映射为无 payload case、直接 payload 与 tuple。字段与 case 的顺序、名称和嵌套类型严格来自 contract；Unit result 省略返回类型，Result 的 Unit 分支使用 WIT 省略 payload 语法。不猜测 Dynamic、异构成员或 anonymous/open variant。只生成严格可表示的 monomorphic subset；Unit field/parameter/Enum payload、generic declaration/application
+的 `f64`，并将明确的有/无符号 8/16/32/64 位整数与 Float32/Float64 一一映射为 WIT 数值类型，不从名称或样例值猜测宽度；再从同一闭合类型树递归生成 `list<T>`、`option<T>` 与 `result<T,E>`。单态 Struct declaration 生成 namespace-qualified named record；闭合单态 Enum 生成 namespace-qualified WIT variant，无、单个和多个 payload 分别映射为无 payload case、直接 payload 与 tuple。字段与 case 的顺序、名称和嵌套类型严格来自 contract；Unit result 省略返回类型，Result 的 Unit 分支使用 WIT 省略 payload 语法。不猜测 Dynamic、异构成员或 anonymous/open variant。只生成严格可表示的 monomorphic subset；Unit field/parameter/Enum payload、generic declaration/application
 等失败会包含精确的 definition/declaration type path。CI 使用 Bytecode Alliance `wit-parser`，发布前
-同时用 Wasmtime 运行 Bool/Buffer/Number/String、递归 List、Option/Result、Struct、Enum、Unit、混合签名与 host import smoke，并用 jco
+同时用 Wasmtime 运行 Bool/Buffer/Number/String、明确宽度数值、递归 List、Option/Result、Struct、Enum、Unit、混合签名与 host import smoke，并用 jco
 转译后在 Node.js 再运行同一语义。Option/Result smoke 覆盖全部分支、Unit payload、嵌套 List 与 post-return；List smoke 覆盖空列表、嵌套空列表及 Bool/Number/String/Buffer item；Buffer 覆盖内嵌零与非 UTF-8 字节，不经过 String 转码。
 
 ### Backend capability matrix
@@ -219,11 +219,13 @@ do not hand-write native symbol strings. TypeScript names derive from complete
 namespace-qualified declaration IDs. WIT accepts only its monomorphic,
 representable subset, derives recursive `list<T>`, `option<T>`, and `result<T,E>` only from closed schemas, emits namespace-qualified named records for monomorphic Struct declarations, and emits namespace-qualified variants for closed monomorphic Enums. Zero, single, and multiple payloads map to payload-free cases, direct payloads, and tuples while preserving contract order and names. Unsupported Unit value positions or Enum payloads, generics, and open shapes report precise definition/declaration type paths. CI parses WIT
 with Bytecode Alliance `wit-parser`, executes Bool/Buffer/Number/String,
-recursive-List, Option/Result, Struct, Enum, Unit, mixed-signature, and host-import smokes in Wasmtime, and transpiles and executes
+explicit numeric-width, recursive-List, Option/Result, Struct, Enum, Unit,
+mixed-signature, and host-import smokes in Wasmtime, and transpiles and executes
 the same Component through jco
 and Node.js. Calcit Buffer maps strictly to `list<u8>` and preserves empty,
 embedded-zero, and non-UTF-8 byte sequences without String transcoding. Calcit
-Number maps to current WIT `f64`.
+Number maps to current WIT `f64`; explicit integer and float refinements map
+one-to-one without name- or sample-based inference.
 Recursive List smokes cover empty and nested-empty lists plus Bool, Number,
 String, and Buffer items without a Dynamic fallback.
 

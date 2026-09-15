@@ -14,6 +14,7 @@ const api = await instantiate(undefined, {
     echo: (value) => value,
     event: (value) => value,
     numbers: (value) => Float64Array.from(value).reverse(),
+    numericScalars: (value) => value,
     optionNumber: (value) => value,
     ping: () => undefined,
     profile: (value) => ({
@@ -35,6 +36,52 @@ if (api.boolNot(true) !== false || api.boolNot(false) !== true) {
 }
 if (api.callHostBoolNot(true) !== false || api.callHostBoolNot(false) !== true) {
   throw new Error("jco callHostBoolNot smoke failed");
+}
+const numericScalars = {
+  f32: 1.5,
+  f64: 1.25,
+  i16: -32768,
+  i32: -2147483648,
+  i64: -9007199254740991n,
+  i8: -128,
+  u16: 65535,
+  u32: 4294967295,
+  u64: 9007199254740991n,
+  u8: 255,
+};
+const expectNumericScalars = (actual, expected, label) => {
+  for (const name of Object.keys(expected)) {
+    if (actual[name] !== expected[name]) {
+      throw new Error(`${label}: ${name} is ${actual[name]}, expected ${expected[name]}`);
+    }
+  }
+};
+expectNumericScalars(
+  api.echoNumericScalars(numericScalars),
+  numericScalars,
+  "jco numeric Struct export smoke failed",
+);
+expectNumericScalars(
+  api.callHostNumericScalars(numericScalars),
+  numericScalars,
+  "jco numeric Struct import smoke failed",
+);
+for (const [field, value] of [
+  ["i64", -9007199254740992n],
+  ["u64", 9007199254740992n],
+]) {
+  for (const [label, call] of [
+    ["direct export", (input) => api.echoNumericScalars(input)],
+    ["host import", (input) => api.callHostNumericScalars(input)],
+  ]) {
+    let trapped = false;
+    try {
+      call({ ...numericScalars, [field]: value });
+    } catch {
+      trapped = true;
+    }
+    if (!trapped) throw new Error(`jco unsafe ${field} ${label} must trap`);
+  }
 }
 const expectBytes = (actual, expected, label) => {
   if (actual.length !== expected.length || actual.some((byte, index) => byte !== expected[index])) {
@@ -204,4 +251,4 @@ for (const event of [
   expectEvent(api.callHostEvent(event), event, "jco Enum import smoke failed");
 }
 
-console.log("jco Enum, Struct, Option/Result, recursive List, and scalar smoke passed");
+console.log("jco numeric, Enum, Struct, Option/Result, recursive List, and scalar smoke passed");

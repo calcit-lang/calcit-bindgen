@@ -31,6 +31,21 @@ struct Profile {
 }
 
 #[derive(Clone, Debug, PartialEq, ComponentType, Lift, Lower)]
+#[component(record)]
+struct NumericScalars {
+    f32: f32,
+    f64: f64,
+    i16: i16,
+    i32: i32,
+    i64: i64,
+    i8: i8,
+    u16: u16,
+    u32: u32,
+    u64: u64,
+    u8: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, ComponentType, Lift, Lower)]
 #[component(variant)]
 enum Event {
     #[component(name = "idle")]
@@ -56,6 +71,8 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
           (import "host" "buffer" (func $host-buffer (param i32 i32 i32)))
           (import "host" "echo" (func $host-echo (param i32 i32 i32)))
           (import "host" "numbers" (func $host-numbers (param i32 i32 i32)))
+          (import "host" "numeric-scalars" (func $host-numeric-scalars
+            (param f32 f64 i32 i32 i64 i32 i32 i32 i64 i32 i32)))
           (memory (export "memory") 1)
           (global $heap (mut i32) (i32.const 1024))
           (func (export "cabi_realloc")
@@ -162,6 +179,58 @@ fn core_module_with_offset(offset: i32) -> Vec<u8> {
             select
             i32.store
             i32.const 8)
+          (func (export "echo-numeric-scalars")
+            (param $f32 f32) (param $f64 f64) (param $i16 i32) (param $i32 i32)
+            (param $i64 i64) (param $i8 i32) (param $u16 i32) (param $u32 i32)
+            (param $u64 i64) (param $u8 i32) (result i32)
+            i32.const 64
+            local.get $f32
+            f32.store
+            i32.const 72
+            local.get $f64
+            f64.store
+            i32.const 80
+            local.get $i16
+            i32.store16
+            i32.const 84
+            local.get $i32
+            i32.store
+            i32.const 88
+            local.get $i64
+            i64.store
+            i32.const 96
+            local.get $i8
+            i32.store8
+            i32.const 98
+            local.get $u16
+            i32.store16
+            i32.const 100
+            local.get $u32
+            i32.store
+            i32.const 104
+            local.get $u64
+            i64.store
+            i32.const 112
+            local.get $u8
+            i32.store8
+            i32.const 64)
+          (func (export "call-host-numeric-scalars")
+            (param $f32 f32) (param $f64 f64) (param $i16 i32) (param $i32 i32)
+            (param $i64 i64) (param $i8 i32) (param $u16 i32) (param $u32 i32)
+            (param $u64 i64) (param $u8 i32) (result i32)
+            local.get $f32
+            local.get $f64
+            local.get $i16
+            local.get $i32
+            local.get $i64
+            local.get $i8
+            local.get $u16
+            local.get $u32
+            local.get $u64
+            local.get $u8
+            i32.const 128
+            call $host-numeric-scalars
+            i32.const 128)
           (func (export "is-buffer") (param i32 i32) (result i32)
             i32.const 1))
         "#,
@@ -232,6 +301,10 @@ fn package_check_and_run(
         .definitions
         .iter()
         .any(|definition| definition.symbol == "echo-event"));
+    let has_numerics = matches!(contract, InterfaceContract::Component(document) if document
+        .definitions
+        .iter()
+        .any(|definition| definition.symbol == "echo-numeric-scalars"));
     let core = temporary.join("program.wasm");
     fs::write(&core, core_module).expect("write core module");
     let output = temporary.join("generated");
@@ -276,6 +349,26 @@ fn package_check_and_run(
             "echo-event: func(arg0: component-wasm-main-event) -> component-wasm-main-event;"
         ));
     }
+    if has_numerics {
+        assert!(wit.contains("record component-wasm-main-numeric-scalars {"));
+        for field in [
+            "%f32: f32,",
+            "%f64: f64,",
+            "i16: s16,",
+            "i32: s32,",
+            "i64: s64,",
+            "i8: s8,",
+            "u16: u16,",
+            "u32: u32,",
+            "u64: u64,",
+            "u8: u8,",
+        ] {
+            assert!(wit.contains(field), "missing numeric WIT field {field}");
+        }
+        assert!(wit.contains(
+            "echo-numeric-scalars: func(arg0: component-wasm-main-numeric-scalars) -> component-wasm-main-numeric-scalars;"
+        ));
+    }
     assert!(
         check_contract_directory(contract, Some(&core), &output, &[])
             .expect("check generated Component")
@@ -304,6 +397,12 @@ fn package_check_and_run(
         Ok((value,))
     })
     .expect("define host numbers");
+    if has_numerics {
+        host.func_wrap("numeric-scalars", |_store, (value,): (NumericScalars,)| {
+            Ok((value,))
+        })
+        .expect("define host numeric scalars");
+    }
     if has_variants {
         host.func_wrap("option-number", |_store, (value,): (Option<f64>,)| {
             Ok((value,))
@@ -393,6 +492,35 @@ fn package_check_and_run(
     call_host_bool
         .post_return(&mut store)
         .expect("finish host bool false call");
+
+    if has_numerics {
+        let value = NumericScalars {
+            f32: 1.5,
+            f64: 1.25,
+            i16: i16::MIN,
+            i32: i32::MIN,
+            i64: -9_007_199_254_740_991,
+            i8: i8::MIN,
+            u16: u16::MAX,
+            u32: u32::MAX,
+            u64: 9_007_199_254_740_991,
+            u8: u8::MAX,
+        };
+        for name in ["echo-numeric-scalars", "call-host-numeric-scalars"] {
+            let function = instance
+                .get_typed_func::<(NumericScalars,), (NumericScalars,)>(&mut store, name)
+                .expect("typed numeric Struct export");
+            assert_eq!(
+                function
+                    .call(&mut store, (value.clone(),))
+                    .expect("round-trip numeric Struct"),
+                (value.clone(),)
+            );
+            function
+                .post_return(&mut store)
+                .expect("finish numeric Struct call");
+        }
+    }
 
     if has_variants {
         let echo_option_number = instance
@@ -878,7 +1006,7 @@ fn component_cli_reuses_validate_generate_and_check() {
         .output()
         .expect("run validate");
     assert!(validate.status.success());
-    assert!(String::from_utf8_lossy(&validate.stdout).contains("valid component Interface IR v1"));
+    assert!(String::from_utf8_lossy(&validate.stdout).contains("valid component Interface IR v2"));
 
     let generate = Command::new(binary)
         .arg("generate")

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use calcit_bindgen::{
-    GenerationBackend, InterfaceContract, check_contract_directory, compare,
+    GenerationBackend, InterfaceContract, check_contract_directory, compare, compare_component,
     generate_contract_directory, load_contract,
 };
 use clap::{Parser, Subcommand, ValueEnum};
@@ -94,13 +94,20 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Diff { old, new, json } => {
             let old = load_contract(old)?;
             let new = load_contract(new)?;
-            let (InterfaceContract::Native(old), InterfaceContract::Native(new)) = (old, new)
-            else {
-                return Err(
-                    "diff currently accepts only native Interface IR v2 contracts".to_owned(),
-                );
+            let report = match (old, new) {
+                (InterfaceContract::Native(old), InterfaceContract::Native(new)) => {
+                    compare(&old, &new)
+                }
+                (InterfaceContract::Component(old), InterfaceContract::Component(new)) => {
+                    compare_component(&old, &new)
+                }
+                _ => {
+                    return Err(
+                        "diff requires both inputs to use the same Interface IR boundary"
+                            .to_owned(),
+                    );
+                }
             };
-            let report = compare(&old, &new);
             if json {
                 println!(
                     "{}",
