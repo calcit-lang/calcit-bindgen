@@ -1,7 +1,7 @@
 use calcit_bindgen::{
-    ChangeKind, ComponentDocument, Declaration, Definition, DefinitionStatus, Document,
-    FunctionSignature, InterfaceContract, Lowering, Parameter, StructField, Type, compare,
-    compare_component, load_contract, load_document, validate_component_document,
+    ChangeKind, ComponentDirection, ComponentDocument, Declaration, Definition, DefinitionStatus,
+    Document, FunctionSignature, InterfaceContract, Lowering, Parameter, StructField, Type,
+    compare, compare_component, load_contract, load_document, validate_component_document,
     validate_document,
 };
 use std::fs;
@@ -134,6 +134,72 @@ fn component_compatibility_tracks_numeric_widths() {
         change.path.contains("NumericScalars.fields")
             && change.message.contains("Uint16")
             && change.message.contains("Uint32")
+    }));
+}
+
+#[test]
+fn component_compatibility_treats_required_imports_as_breaking() {
+    let InterfaceContract::Component(baseline) =
+        load_contract("tests/fixtures/component-interface.cirru").expect("load Component contract")
+    else {
+        panic!("expected a Component contract");
+    };
+    let import_id = baseline
+        .definitions
+        .iter()
+        .find(|definition| definition.direction == ComponentDirection::Import)
+        .expect("fixture host import")
+        .id
+        .clone();
+
+    let mut without_import = baseline.clone();
+    without_import
+        .definitions
+        .retain(|definition| definition.id != import_id);
+    let added_import = compare_component(&without_import, &baseline);
+    assert!(!added_import.compatible);
+    assert!(added_import.changes.iter().any(|change| {
+        change.path == format!("definitions.{import_id}")
+            && change.kind == ChangeKind::Breaking
+            && change.message == "added required host import"
+    }));
+
+    let mut unsupported_import = baseline.clone();
+    let definition = unsupported_import
+        .definitions
+        .iter_mut()
+        .find(|definition| definition.id == import_id)
+        .expect("fixture host import");
+    definition.status = DefinitionStatus::Unsupported;
+    definition.signature = None;
+    definition.diagnostic_codes = vec!["E_UNSUPPORTED".to_owned()];
+    let enabled_import = compare_component(&unsupported_import, &baseline);
+    assert!(!enabled_import.compatible);
+    assert!(enabled_import.changes.iter().any(|change| {
+        change.path == format!("definitions.{import_id}.status")
+            && change.kind == ChangeKind::Breaking
+            && change
+                .message
+                .contains("unsupported to supported required host import")
+    }));
+
+    let export_id = baseline
+        .definitions
+        .iter()
+        .find(|definition| definition.direction == ComponentDirection::Export)
+        .expect("fixture export")
+        .id
+        .clone();
+    let mut without_export = baseline.clone();
+    without_export
+        .definitions
+        .retain(|definition| definition.id != export_id);
+    let added_export = compare_component(&without_export, &baseline);
+    assert!(added_export.compatible);
+    assert!(added_export.changes.iter().any(|change| {
+        change.path == format!("definitions.{export_id}")
+            && change.kind == ChangeKind::Additive
+            && change.message == "added"
     }));
 }
 

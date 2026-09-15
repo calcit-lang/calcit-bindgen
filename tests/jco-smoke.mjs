@@ -70,13 +70,18 @@ for (const [field, value] of [
   ["i64", -9007199254740992n],
   ["u64", 9007199254740992n],
 ]) {
-  let trapped = false;
-  try {
-    api.echoNumericScalars({ ...numericScalars, [field]: value });
-  } catch {
-    trapped = true;
+  for (const [label, call] of [
+    ["direct export", (input) => api.echoNumericScalars(input)],
+    ["host import", (input) => api.callHostNumericScalars(input)],
+  ]) {
+    let trapped = false;
+    try {
+      call({ ...numericScalars, [field]: value });
+    } catch {
+      trapped = true;
+    }
+    if (!trapped) throw new Error(`jco unsafe ${field} ${label} must trap`);
   }
-  if (!trapped) throw new Error(`jco unsafe ${field} must trap`);
 }
 const expectBytes = (actual, expected, label) => {
   if (actual.length !== expected.length || actual.some((byte, index) => byte !== expected[index])) {
