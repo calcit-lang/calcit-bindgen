@@ -11,8 +11,12 @@ use crate::{
 
 const FFI_INTERFACE_IR_V2_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json";
+const FFI_INTERFACE_IR_V3_SCHEMA_ID: &str =
+    "https://calcit-lang.org/schemas/ffi-interface-ir-v3.schema.json";
 const COMPONENT_INTERFACE_IR_V2_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/component-interface-ir-v2.schema.json";
+const COMPONENT_INTERFACE_IR_V3_SCHEMA_ID: &str =
+    "https://calcit-lang.org/schemas/component-interface-ir-v3.schema.json";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,7 +98,7 @@ pub fn load_document(path: impl AsRef<Path>) -> Result<Document, String> {
     match load_contract(path)? {
         InterfaceContract::Native(document) => Ok(document),
         InterfaceContract::Component(_) => {
-            Err("expected native Interface IR v2, received Component Interface IR v2".to_owned())
+            Err("expected native Interface IR, received Component Interface IR".to_owned())
         }
     }
 }
@@ -109,7 +113,10 @@ pub fn load_contract(path: impl AsRef<Path>) -> Result<InterfaceContract, String
             .get("interface_schema")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "ffi.export envelope must declare interface_schema".to_owned())?;
-        if schema == COMPONENT_INTERFACE_IR_V2_SCHEMA_ID {
+        if matches!(
+            schema,
+            COMPONENT_INTERFACE_IR_V2_SCHEMA_ID | COMPONENT_INTERFACE_IR_V3_SCHEMA_ID
+        ) {
             let envelope: ComponentExportEnvelope = serde_json::from_value(value)
                 .map_err(|error| format!("invalid Component ffi.export envelope: {error}"))?;
             validate_component_export_envelope(&envelope)?;
@@ -198,9 +205,18 @@ fn validate_export_envelope(envelope: &ExportEnvelope) -> Result<(), String> {
             envelope.command, envelope.schema_version
         ));
     }
-    if envelope.interface_schema != FFI_INTERFACE_IR_V2_SCHEMA_ID {
+    let expected_schema = match envelope.data.interface.version {
+        2 => FFI_INTERFACE_IR_V2_SCHEMA_ID,
+        3 => FFI_INTERFACE_IR_V3_SCHEMA_ID,
+        version => {
+            return Err(format!(
+                "unsupported Interface IR version {version}; calcit-bindgen supports v2 and v3"
+            ));
+        }
+    };
+    if envelope.interface_schema != expected_schema {
         return Err(format!(
-            "expected Interface IR schema {FFI_INTERFACE_IR_V2_SCHEMA_ID:?}, received {:?}",
+            "expected Interface IR schema {expected_schema:?}, received {:?}",
             envelope.interface_schema
         ));
     }
@@ -288,9 +304,18 @@ fn validate_component_export_envelope(envelope: &ComponentExportEnvelope) -> Res
             envelope.command, envelope.schema_version
         ));
     }
-    if envelope.interface_schema != COMPONENT_INTERFACE_IR_V2_SCHEMA_ID {
+    let expected_schema = match envelope.data.interface.version {
+        2 => COMPONENT_INTERFACE_IR_V2_SCHEMA_ID,
+        3 => COMPONENT_INTERFACE_IR_V3_SCHEMA_ID,
+        version => {
+            return Err(format!(
+                "unsupported Component Interface IR version {version}; calcit-bindgen supports v2 and v3"
+            ));
+        }
+    };
+    if envelope.interface_schema != expected_schema {
         return Err(format!(
-            "expected Component Interface IR schema {COMPONENT_INTERFACE_IR_V2_SCHEMA_ID:?}, received {:?}",
+            "expected Component Interface IR schema {expected_schema:?}, received {:?}",
             envelope.interface_schema
         ));
     }
@@ -384,9 +409,9 @@ fn validate_export_summary(
 }
 
 pub fn validate_document(document: &Document) -> Result<(), String> {
-    if document.version != 2 {
+    if !matches!(document.version, 2 | 3) {
         return Err(format!(
-            "unsupported Interface IR version {}; calcit-bindgen requires v2",
+            "unsupported Interface IR version {}; calcit-bindgen supports v2 and v3",
             document.version
         ));
     }
@@ -411,6 +436,7 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
         return Err("Interface IR contains duplicate definition IDs".to_owned());
     }
 
+    let allow_numeric_refinements = document.version >= 3;
     for declaration in &document.declarations {
         let parameters = declaration
             .type_parameters()
@@ -426,13 +452,25 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
         match declaration {
             Declaration::Struct { fields, .. } => {
                 for field in fields {
-                    validate_type(&field.type_ir, &declarations, &parameters, true, false)?;
+                    validate_type(
+                        &field.type_ir,
+                        &declarations,
+                        &parameters,
+                        true,
+                        allow_numeric_refinements,
+                    )?;
                 }
             }
             Declaration::Enum { variants, .. } => {
                 for variant in variants {
                     for item in &variant.payload {
-                        validate_type(item, &declarations, &parameters, true, false)?;
+                        validate_type(
+                            item,
+                            &declarations,
+                            &parameters,
+                            true,
+                            allow_numeric_refinements,
+                        )?;
                     }
                 }
             }
@@ -462,9 +500,21 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
                             definition.id
                         ));
                     }
-                    validate_type(&parameter.type_ir, &declarations, &none, false, false)?;
+                    validate_type(
+                        &parameter.type_ir,
+                        &declarations,
+                        &none,
+                        false,
+                        allow_numeric_refinements,
+                    )?;
                 }
-                validate_type(&signature.result, &declarations, &none, false, false)?;
+                validate_type(
+                    &signature.result,
+                    &declarations,
+                    &none,
+                    false,
+                    allow_numeric_refinements,
+                )?;
             }
             (DefinitionStatus::Unsupported, Some(_)) | (DefinitionStatus::Unsupported, None) => {}
         }
@@ -473,9 +523,9 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
 }
 
 pub fn validate_component_document(document: &ComponentDocument) -> Result<(), String> {
-    if document.version != 2 {
+    if !matches!(document.version, 2 | 3) {
         return Err(format!(
-            "unsupported Component Interface IR version {}; calcit-bindgen requires v2",
+            "unsupported Component Interface IR version {}; calcit-bindgen supports v2 and v3",
             document.version
         ));
     }
@@ -524,6 +574,22 @@ pub fn validate_component_document(document: &ComponentDocument) -> Result<(), S
     let mut ids = BTreeSet::new();
     let mut bindings = BTreeSet::new();
     for definition in &document.definitions {
+        match (document.version, definition.invocation) {
+            (2, None) | (3, Some(_)) => {}
+            (2, Some(_)) => {
+                return Err(format!(
+                    "Component Interface IR v2 definition {} must not declare invocation",
+                    definition.id
+                ));
+            }
+            (3, None) => {
+                return Err(format!(
+                    "Component Interface IR v3 definition {} must declare invocation",
+                    definition.id
+                ));
+            }
+            _ => unreachable!(),
+        }
         if !ids.insert(definition.id.as_str()) {
             return Err(format!(
                 "Component Interface IR contains duplicate definition ID {}",
@@ -628,9 +694,10 @@ fn validate_type(
         | Type::Int64
         | Type::Uint64
         | Type::Float32
-        | Type::Float64 => {
-            Err("explicit numeric refinements require Component Interface IR v2".to_owned())
-        }
+        | Type::Float64 => Err(
+            "explicit numeric refinements require Interface IR v3 or Component Interface IR v2+"
+                .to_owned(),
+        ),
         Type::List { item } | Type::Option { item } => validate_type(
             item,
             declarations,

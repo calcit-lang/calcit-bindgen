@@ -3,8 +3,8 @@ use std::fmt::Write;
 
 use crate::names::{insert_unique, kebab};
 use crate::{
-    ComponentDirection, ComponentDocument, Declaration, DefinitionStatus, Document,
-    FunctionSignature, Type,
+    ComponentDirection, ComponentDocument, ComponentInvocation, Declaration, DefinitionStatus,
+    Document, FunctionSignature, Type,
 };
 
 pub(crate) fn render(document: &Document) -> Result<String, String> {
@@ -76,6 +76,12 @@ pub(crate) fn render_component(document: &ComponentDocument) -> Result<String, S
         if definition.status != DefinitionStatus::Supported {
             return Err(format!(
                 "definitions.{}: Component generation requires a supported definition",
+                definition.id
+            ));
+        }
+        if definition.invocation == Some(ComponentInvocation::Async) {
+            return Err(format!(
+                "definitions.{}: async Component invocation is not yet representable by the packaging backend",
                 definition.id
             ));
         }
@@ -620,9 +626,42 @@ mod tests {
 
     use super::{ComponentWitNames, render_component, render_component_type};
     use crate::{
-        ComponentDefinition, ComponentDirection, ComponentDocument, Declaration, DefinitionStatus,
-        EnumVariant, FunctionSignature, Parameter, StructField, Type,
+        ComponentDefinition, ComponentDirection, ComponentDocument, ComponentInvocation,
+        Declaration, DefinitionStatus, EnumVariant, FunctionSignature, Parameter, StructField,
+        Type,
     };
+
+    #[test]
+    fn component_v3_async_invocation_fails_before_packaging() {
+        let document = ComponentDocument {
+            version: 3,
+            package: "demo".to_owned(),
+            package_version: "0.0.0".to_owned(),
+            declarations: vec![],
+            definitions: vec![ComponentDefinition {
+                id: "app.main/fetch".to_owned(),
+                namespace: "app.main".to_owned(),
+                name: "fetch".to_owned(),
+                doc: String::new(),
+                logical_schema: String::new(),
+                direction: ComponentDirection::Export,
+                invocation: Some(ComponentInvocation::Async),
+                module: None,
+                symbol: "fetch".to_owned(),
+                signature: Some(FunctionSignature {
+                    parameters: vec![],
+                    result: Type::String,
+                }),
+                status: DefinitionStatus::Supported,
+                diagnostic_codes: vec![],
+            }],
+        };
+
+        let error = render_component(&document)
+            .expect_err("async Component invocation must not reach synchronous packaging");
+        assert!(error.contains("definitions.app.main/fetch"));
+        assert!(error.contains("async Component invocation"));
+    }
 
     #[test]
     fn component_type_rendering_is_recursive_and_keeps_payload_paths() {
@@ -754,6 +793,7 @@ mod tests {
                 doc: String::new(),
                 logical_schema: String::new(),
                 direction: ComponentDirection::Export,
+                invocation: None,
                 module: None,
                 symbol: "echo-profile".to_owned(),
                 signature: Some(FunctionSignature {
@@ -835,6 +875,7 @@ mod tests {
                 doc: String::new(),
                 logical_schema: String::new(),
                 direction: ComponentDirection::Export,
+                invocation: None,
                 module: None,
                 symbol: "echo-event".to_owned(),
                 signature: Some(FunctionSignature {

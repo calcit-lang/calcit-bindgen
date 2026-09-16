@@ -20,8 +20,8 @@ pub use generate::{
     generate_directory_with_backends,
 };
 pub use model::{
-    ComponentDefinition, ComponentDirection, ComponentDocument, Declaration, Definition,
-    DefinitionStatus, Document, EnumVariant, Envelope, FunctionSignature, InterfaceContract,
-    Lowering, Parameter, StructField, Type,
+    ComponentDefinition, ComponentDirection, ComponentDocument, ComponentInvocation, Declaration,
+    Definition, DefinitionStatus, Document, EnumVariant, Envelope, FunctionSignature,
+    InterfaceContract, Lowering, Parameter, StructField, Type,
 };
 pub use validate::{load_contract, load_document, validate_component_document, validate_document};

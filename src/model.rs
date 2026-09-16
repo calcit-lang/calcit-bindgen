@@ -81,6 +81,8 @@ pub struct ComponentDefinition {
     pub doc: String,
     pub logical_schema: String,
     pub direction: ComponentDirection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invocation: Option<ComponentInvocation>,
     pub module: Option<String>,
     pub symbol: String,
     pub signature: Option<FunctionSignature>,
@@ -93,6 +95,13 @@ pub struct ComponentDefinition {
 pub enum ComponentDirection {
     Import,
     Export,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ComponentInvocation {
+    Sync,
+    Async,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

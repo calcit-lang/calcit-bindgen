@@ -1,7 +1,7 @@
 use calcit_bindgen::{
-    ChangeKind, ComponentDocument, Declaration, Definition, DefinitionStatus, Document,
-    FunctionSignature, InterfaceContract, Lowering, Parameter, StructField, Type, compare,
-    compare_component, load_contract, load_document, validate_component_document,
+    ChangeKind, ComponentDocument, ComponentInvocation, Declaration, Definition, DefinitionStatus,
+    Document, FunctionSignature, InterfaceContract, Lowering, Parameter, StructField, Type,
+    compare, compare_component, load_contract, load_document, validate_component_document,
     validate_document,
 };
 use std::fs;
@@ -226,7 +226,28 @@ fn rejects_old_component_contract_versions() {
     assert!(
         validate_component_document(&document)
             .unwrap_err()
-            .contains("requires v2")
+            .contains("supports v2 and v3")
+    );
+}
+
+#[test]
+fn validates_component_v3_invocation_contracts() {
+    let InterfaceContract::Component(mut document) =
+        load_contract("tests/fixtures/component-interface.cirru").expect("load Component contract")
+    else {
+        panic!("expected a Component contract");
+    };
+    document.version = 3;
+    for definition in &mut document.definitions {
+        definition.invocation = Some(ComponentInvocation::Sync);
+    }
+    validate_component_document(&document).expect("valid Component Interface IR v3 document");
+
+    document.definitions[0].invocation = None;
+    assert!(
+        validate_component_document(&document)
+            .unwrap_err()
+            .contains("must declare invocation")
     );
 }
 
@@ -276,6 +297,56 @@ fn loads_explicit_json_component_projection() {
     ));
 }
 
+#[test]
+fn loads_explicit_json_component_v3_projection() {
+    let InterfaceContract::Component(mut document) =
+        load_contract("tests/fixtures/component-interface.cirru").expect("load EDN contract")
+    else {
+        panic!("expected a Component contract");
+    };
+    document.version = 3;
+    for definition in &mut document.definitions {
+        definition.invocation = Some(ComponentInvocation::Sync);
+    }
+    let diagnostics = Vec::<serde_json::Value>::new();
+    let revision = format!(
+        "md5:{:x}",
+        md5::compute(serde_json::to_vec(&(&document, &diagnostics)).expect("revision input"))
+    );
+    let definitions = document.definitions.len();
+    let envelope = serde_json::json!({
+        "schema_version": 1,
+        "interface_schema": "https://calcit-lang.org/schemas/component-interface-ir-v3.schema.json",
+        "command": "ffi.export",
+        "revision": revision,
+        "data": {
+            "filters": {
+                "boundary": "component",
+                "namespace": null,
+                "include_dependencies": false
+            },
+            "interface": document,
+            "summary": {
+                "definitions": definitions,
+                "supported": definitions,
+                "unsupported": 0,
+                "diagnostics": 0
+            }
+        },
+        "diagnostics": diagnostics
+    });
+    let file = tempfile::NamedTempFile::new().expect("temporary Component v3 JSON");
+    fs::write(
+        file.path(),
+        serde_json::to_vec_pretty(&envelope).expect("encode Component v3 JSON"),
+    )
+    .expect("write Component v3 JSON");
+    assert!(matches!(
+        load_contract(file.path()).expect("load explicit Component v3 JSON projection"),
+        InterfaceContract::Component(_)
+    ));
+}
+
 #[derive(Clone, serde::Serialize)]
 struct TestDiagnostic {
     code: &'static str,
@@ -295,9 +366,13 @@ fn export_envelope(document: &Document, diagnostics: Vec<TestDiagnostic>) -> ser
         .iter()
         .filter(|definition| definition.status == DefinitionStatus::Supported)
         .count();
+    let interface_schema = format!(
+        "https://calcit-lang.org/schemas/ffi-interface-ir-v{}.schema.json",
+        document.version
+    );
     serde_json::json!({
         "schema_version": 1,
-        "interface_schema": "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json",
+        "interface_schema": interface_schema,
         "command": "ffi.export",
         "revision": format!("md5:{:x}", md5::compute(revision_payload)),
         "data": {
@@ -432,10 +507,30 @@ fn validates_the_complete_ffi_export_envelope_contract() {
 }
 
 #[test]
+fn loads_native_v3_export_envelope_with_numeric_widths() {
+    let mut document = document();
+    document.version = 3;
+    document.definitions[0]
+        .signature
+        .as_mut()
+        .expect("signature")
+        .result = Type::Int32;
+    let envelope = export_envelope(&document, vec![]);
+    assert_eq!(
+        load_json(&envelope).expect("valid native Interface IR v3 envelope"),
+        document
+    );
+}
+
+#[test]
 fn rejects_unknown_versions_and_missing_declarations() {
     let mut old = document();
     old.version = 1;
-    assert!(validate_document(&old).unwrap_err().contains("requires v2"));
+    assert!(
+        validate_document(&old)
+            .unwrap_err()
+            .contains("supports v2 and v3")
+    );
 
     let mut missing = document();
     missing.declarations.clear();
@@ -454,8 +549,11 @@ fn rejects_unknown_versions_and_missing_declarations() {
     assert!(
         validate_document(&component_only_numeric)
             .unwrap_err()
-            .contains("require Component Interface IR v2")
+            .contains("require Interface IR v3")
     );
+
+    component_only_numeric.version = 3;
+    validate_document(&component_only_numeric).expect("native Interface IR v3 numeric width");
 }
 
 #[test]
