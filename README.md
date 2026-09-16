@@ -7,18 +7,18 @@ Interface IR.
 
 ## Status / 状态
 
-本仓库处于 **active development / experimental tooling** 阶段。native Interface IR v2 的
+本仓库处于 **active development / experimental tooling** 阶段。native Interface IR v2/v3 的
 validation、compatibility diff、canonical generate/check 与严格同步 Rust、Calcit、TypeScript、WIT
-backends 已可用；Component Interface IR v2 的 production 路径也可将 Calcit 生成的
+backends 已可用；Component Interface IR v2/v3 的 production 路径也可将 Calcit 生成的
 Bool/Buffer/Number/String、递归同质 List、闭合单态 Option/Result、单态 Struct record 及 Unit 结果的 core module 打包为可运行 WebAssembly Component。公开、版本化的 Interface IR 和
 Canonical ABI adapter 由 Calcit core 定义；WIT、组件封装、manifest 和多宿主验证由本工具负责。
 更完整的复合类型支持与真实生态迁移仍由
 [calcit-bindgen#5](https://github.com/calcit-lang/calcit-bindgen/issues/5) 追踪。
 
-This repository is active experimental tooling. Native Interface IR v2
+This repository is active experimental tooling. Native Interface IR v2/v3
 validation, compatibility diff, canonical generate/check, and strict
 synchronous Rust, Calcit, TypeScript, and WIT backends are usable. The first
-Component Interface IR v2 production path also packages Calcit-generated
+Component Interface IR v2/v3 production path also packages Calcit-generated
 Bool/Buffer/Number/String, recursively homogeneous List, closed monomorphic Option/Result, monomorphic Struct records, closed monomorphic Enum variants, and Unit-result core modules as runnable WebAssembly Components. Calcit core owns
 the public versioned contract and Canonical ABI adapters; this tool owns WIT,
 component packaging, manifests, and cross-host verification. Composite types
@@ -28,13 +28,13 @@ and broader real-module migration remain tracked by calcit-bindgen#5.
 
 该 crate 独立于 Calcit core，严格消费 `calcit ffi export` 产生的版本化 Interface IR。
 Component contract 默认使用 Cirru EDN；需要接入只接受 JSON 的工具时，可显式指定
-`--format json`。native v2 envelope/document 继续支持 JSON 校验和兼容性 diff，确保
+`--format json`。native v2/v3 envelope/document 支持 JSON 校验和兼容性 diff，确保
 未知版本、缺失 declaration、错误 nominal kind/arity、非 monomorphic callable 在
 进入生成器前失败。
 
 输入为 `calcit ffi export --json` envelope 时，还会校验 envelope schema ID、依赖
 过滤条件、summary 计数、完整结构化 diagnostics 与 core 生成的 revision digest。
-裸 Interface IR v2 document 仍是受支持输入；两种入口都会按公开 JSON schema 拒绝
+裸 Interface IR v2/v3 document 也是受支持输入；两种入口都会按公开 JSON schema 拒绝
 未知字段。`filters.namespace` 是 v1 必填字段，未筛选时必须为 `null`。loader 会先
 验证 envelope metadata，再抽取并返回内层 `Document`；返回值本身不保留 envelope
 metadata。
@@ -72,6 +72,7 @@ calcit project/calcit.cirru ffi export --boundary component --format json \
 
 Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String、递归同质 `List<T>`、闭合单态 `Option<T>` / `Result<T,E>`、单态 Struct record、闭合单态 Enum variant 与 Unit 结果，并产生规范化
 `interface.json`、`wit/interface.wit`、`component/component.wasm` 与 ownership manifest。
+Component v3 的 `invocation` 会被显式校验；当前 packaging backend 只接受 `sync`，并在写入产物前明确拒绝 `async`。
 manifest 同时记录 contract digest、core module digest 和三个 managed artifacts。
 输入 core module 的 import/export、memory、`cabi_realloc` 或 Canonical ABI 签名不匹配时，
 命令会在创建或替换输出目录前失败。`check` 会重新编码并保持只读，因此也能发现 core module
@@ -142,7 +143,7 @@ WIT 将 Calcit Buffer 严格映射为 `list<u8>`，将 Calcit Number 映射为�
 This crate is independent of Calcit core and strictly consumes versioned
 Interface IR emitted by `calcit ffi export`. Component contracts default to
 Cirru EDN; use `--format json` only when interoperating with JSON-only tooling.
-Native v2 envelopes/documents remain JSON-compatible and support compatibility
+Native v2/v3 envelopes/documents are JSON-compatible and support compatibility
 diffs before generation. Unknown versions, missing declarations, nominal
 kind/arity mismatches, and non-monomorphic callables fail explicitly.
 
@@ -160,7 +161,7 @@ cargo run -- check component-interface.cirru \
 
 For a `calcit ffi export --json` envelope, validation also checks the envelope
 schema ID, dependency filter, summary counts, complete structured diagnostics,
-and the core-produced revision digest. Raw Interface IR v2 documents remain a
+and the core-produced revision digest. Raw Interface IR v2/v3 documents remain a
 supported input. Both entry forms reject unknown fields in line with the public
 JSON schema. `filters.namespace` is required by v1 and must be `null` when no
 filter is active. The loader validates envelope metadata before extracting and
@@ -203,6 +204,8 @@ and a manifest containing both contract and core-module digests. Core imports,
 exports, memory, `cabi_realloc`, and Canonical ABI signatures are checked before
 the managed output directory is created or replaced. `check` deterministically
 re-encodes the component without modifying the output directory.
+Component v3 `invocation` is validated explicitly. The current packaging
+backend accepts only `sync` and rejects `async` before writing artifacts.
 
 The Rust backend accepts only `native + sync + edn-buffer-v1`. It emits
 namespace-qualified Rust names, a typed service trait, codecs for the strict

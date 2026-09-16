@@ -17,7 +17,7 @@ struct Cli {
 enum Command {
     /// Validate a supported native or Component Interface IR contract.
     Validate { input: PathBuf },
-    /// Compare two validated Interface IR v2 documents.
+    /// Compare two validated Interface IR v2/v3 contracts.
     Diff {
         old: PathBuf,
         new: PathBuf,

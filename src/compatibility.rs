@@ -4,8 +4,8 @@ use std::fmt::Debug;
 use serde::Serialize;
 
 use crate::{
-    ComponentDefinition, ComponentDirection, ComponentDocument, Declaration, Definition,
-    DefinitionStatus, Document, EnumVariant, FunctionSignature, Lowering, StructField,
+    ComponentDefinition, ComponentDirection, ComponentDocument, ComponentInvocation, Declaration,
+    Definition, DefinitionStatus, Document, EnumVariant, FunctionSignature, Lowering, StructField,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -196,6 +196,12 @@ fn compare_component_definition(
                 format!("{path}.direction"),
                 &old.direction,
                 &new.direction,
+                changes,
+            );
+            compare_value(
+                format!("{path}.invocation"),
+                &old.invocation.unwrap_or(ComponentInvocation::Sync),
+                &new.invocation.unwrap_or(ComponentInvocation::Sync),
                 changes,
             );
             compare_value(format!("{path}.module"), &old.module, &new.module, changes);
