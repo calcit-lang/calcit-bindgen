@@ -130,11 +130,12 @@ WIT 将 Calcit Buffer 严格映射为 `list<u8>`，将 Calcit Number 映射为�
 | Enum | codecs | qualified schema references | qualified generated names | closed monomorphic variants |
 | Generic declarations | yes | applied callable references | yes | unsupported |
 | `native + sync + edn-buffer-v1` | yes | yes | declaration view | interface view |
-| async WIT / async Canonical ABI lifecycle | unsupported | unsupported | unsupported | declarations yes; runnable lifecycle unsupported |
+| async WIT / async Canonical ABI lifecycle | unsupported | unsupported | unsupported | declarations and caller-wired packaging/execution yes; wiring generation/lifecycle ownership unsupported |
 
 非目标包括猜测 Dynamic、把 resource 伪装成 Struct、生成双向 Component bindings，以及在本仓库
-重新定义 Calcit Interface IR 或 native ABI。当前 async 支持仅限 WIT declaration 渲染；async Canonical
-ABI wiring、可运行 Component、callback 与 resource lifecycle 仍是明确的非目标。
+重新定义 Calcit Interface IR 或 native ABI。当前 async 支持包括 WIT declaration 渲染，以及打包并执行
+调用方提供的、已实现 async Canonical ABI wiring 的 core module。本工具仍不生成该 wiring，也不保证缺少
+该 wiring 的 core module 可运行；主动取消、callback 与 resource lifecycle 仍是明确的非目标。
 
 消费 crate 需要依赖 `calcit_native_ffi = "0.1.3"` 和 `cirru_edn = "0.8.2"`，在 crate
 根部 `include!` 生成文件，实现其中的 package service trait，然后调用生成的
@@ -245,10 +246,12 @@ Recursive List smokes cover empty and nested-empty lists plus Bool, Number,
 String, and Buffer items without a Dynamic fallback.
 
 The capability matrix above is normative for the current MVP. Async WIT
-declaration rendering is supported; async Canonical ABI wiring, runnable async
-Components, callback and resource lifecycle, Dynamic guessing, bidirectional
-Component bindings, and ownership of the Interface IR or native ABI remain
-explicit non-goals.
+declaration rendering plus packaging and execution of caller-supplied core
+modules with complete async Canonical ABI wiring are supported. This tool does
+not generate that wiring or make core modules runnable when it is absent.
+Active cancellation, callback and resource lifecycle, Dynamic guessing,
+bidirectional Component bindings, and ownership of the Interface IR or native
+ABI remain explicit non-goals.
 
 Consumer crates depend on `calcit_native_ffi = "0.1.3"` and
 `cirru_edn = "0.8.2"`, `include!` the generated file at crate root, implement
