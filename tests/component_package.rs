@@ -440,9 +440,6 @@ fn package_check_and_run(
         add_one.call(&mut store, (41.0,)).expect("call add-one"),
         (42.0,)
     );
-    add_one
-        .post_return(&mut store)
-        .expect("finish add-one call");
 
     let call_host = instance
         .get_typed_func::<(f64,), (f64,)>(&mut store, "call-host-add-one")
@@ -451,7 +448,6 @@ fn package_check_and_run(
         call_host.call(&mut store, (40.0,)).expect("call host"),
         (42.0,)
     );
-    call_host.post_return(&mut store).expect("finish host call");
 
     let bool_not = instance
         .get_typed_func::<(bool,), (bool,)>(&mut store, "bool-not")
@@ -460,16 +456,10 @@ fn package_check_and_run(
         bool_not.call(&mut store, (true,)).expect("negate true"),
         (false,)
     );
-    bool_not
-        .post_return(&mut store)
-        .expect("finish bool-not true call");
     assert_eq!(
         bool_not.call(&mut store, (false,)).expect("negate false"),
         (true,)
     );
-    bool_not
-        .post_return(&mut store)
-        .expect("finish bool-not false call");
 
     let call_host_bool = instance
         .get_typed_func::<(bool,), (bool,)>(&mut store, "call-host-bool-not")
@@ -480,18 +470,12 @@ fn package_check_and_run(
             .expect("call host bool-not"),
         (false,)
     );
-    call_host_bool
-        .post_return(&mut store)
-        .expect("finish host bool true call");
     assert_eq!(
         call_host_bool
             .call(&mut store, (false,))
             .expect("call host bool-not with false"),
         (true,)
     );
-    call_host_bool
-        .post_return(&mut store)
-        .expect("finish host bool false call");
 
     if has_numerics {
         let value = NumericScalars {
@@ -516,9 +500,6 @@ fn package_check_and_run(
                     .expect("round-trip numeric Struct"),
                 (value.clone(),)
             );
-            function
-                .post_return(&mut store)
-                .expect("finish numeric Struct call");
         }
     }
 
@@ -533,9 +514,6 @@ fn package_check_and_run(
                     .expect("echo Option<Number>"),
                 (value,)
             );
-            echo_option_number
-                .post_return(&mut store)
-                .expect("finish Option<Number> call");
         }
 
         let echo_option_text = instance
@@ -548,9 +526,6 @@ fn package_check_and_run(
                     .expect("echo Option<String>"),
                 (value,)
             );
-            echo_option_text
-                .post_return(&mut store)
-                .expect("finish Option<String> call");
         }
 
         let echo_result_number = instance
@@ -566,9 +541,6 @@ fn package_check_and_run(
                     .expect("echo Result<Number,String>"),
                 (value,)
             );
-            echo_result_number
-                .post_return(&mut store)
-                .expect("finish Result<Number,String> call");
         }
 
         let echo_result_unit = instance
@@ -584,9 +556,6 @@ fn package_check_and_run(
                     .expect("echo Result<Unit,String>"),
                 (value,)
             );
-            echo_result_unit
-                .post_return(&mut store)
-                .expect("finish Result<Unit,String> call");
         }
 
         let echo_result_numbers = instance
@@ -602,9 +571,6 @@ fn package_check_and_run(
                     .expect("echo Result<List<Number>,String>"),
                 (value,)
             );
-            echo_result_numbers
-                .post_return(&mut store)
-                .expect("finish Result<List<Number>,String> call");
         }
 
         let call_host_option = instance
@@ -616,9 +582,6 @@ fn package_check_and_run(
                 .expect("call host Option<Number>"),
             (Some(12.5),)
         );
-        call_host_option
-            .post_return(&mut store)
-            .expect("finish host Option<Number> call");
 
         let call_host_result = instance
             .get_typed_func::<(Result<f64, String>,), (Result<f64, String>,)>(
@@ -633,24 +596,17 @@ fn package_check_and_run(
                     .expect("call host Result<Number,String>"),
                 (value,)
             );
-            call_host_result
-                .post_return(&mut store)
-                .expect("finish host Result<Number,String> call");
         }
 
         let ping = instance
             .get_typed_func::<(), ()>(&mut store, "ping")
             .expect("typed ping export");
         ping.call(&mut store, ()).expect("call Unit export");
-        ping.post_return(&mut store).expect("finish Unit export");
 
         let call_host_ping = instance
             .get_typed_func::<(), ()>(&mut store, "call-host-ping")
             .expect("typed call-host-ping export");
         call_host_ping.call(&mut store, ()).expect("call host Unit");
-        call_host_ping
-            .post_return(&mut store)
-            .expect("finish host Unit call");
     }
 
     if has_structs {
@@ -671,9 +627,6 @@ fn package_check_and_run(
                 .expect("echo Struct record"),
             (profile.clone(),)
         );
-        echo_profile
-            .post_return(&mut store)
-            .expect("finish Struct record call");
 
         let call_host_profile = instance
             .get_typed_func::<(Profile,), (Profile,)>(&mut store, "call-host-profile")
@@ -687,9 +640,6 @@ fn package_check_and_run(
                 .expect("call host Struct record"),
             (expected,)
         );
-        call_host_profile
-            .post_return(&mut store)
-            .expect("finish host Struct record call");
 
         let alternate_profile = Profile {
             active: true,
@@ -705,9 +655,6 @@ fn package_check_and_run(
                 .expect("echo Struct record with None and Err"),
             (alternate_profile.clone(),)
         );
-        echo_profile
-            .post_return(&mut store)
-            .expect("finish alternate Struct record call");
         let mut alternate_expected = alternate_profile.clone();
         alternate_expected.active = false;
         alternate_expected.stats.score = 8.5;
@@ -717,9 +664,6 @@ fn package_check_and_run(
                 .expect("call host Struct record with None and Err"),
             (alternate_expected,)
         );
-        call_host_profile
-            .post_return(&mut store)
-            .expect("finish alternate host Struct record call");
     }
 
     if has_enums {
@@ -750,18 +694,12 @@ fn package_check_and_run(
                     .expect("echo Enum variant"),
                 (event.clone(),)
             );
-            echo_event
-                .post_return(&mut store)
-                .expect("finish Enum export call");
             assert_eq!(
                 call_host_event
                     .call(&mut store, (event.clone(),))
                     .expect("call host Enum variant"),
                 (event,)
             );
-            call_host_event
-                .post_return(&mut store)
-                .expect("finish host Enum call");
         }
     }
 
@@ -775,9 +713,6 @@ fn package_check_and_run(
                 .expect("echo Buffer"),
             (bytes,)
         );
-        echo_buffer
-            .post_return(&mut store)
-            .expect("finish echo-buffer call");
     }
 
     let choose_buffer = instance
@@ -789,18 +724,12 @@ fn package_check_and_run(
             .expect("choose Buffer true branch"),
         (vec![0, 255],)
     );
-    choose_buffer
-        .post_return(&mut store)
-        .expect("finish choose-buffer true call");
     assert_eq!(
         choose_buffer
             .call(&mut store, (false, vec![0, 255], vec![17, 0, 128]))
             .expect("choose Buffer false branch"),
         (vec![17, 0, 128],)
     );
-    choose_buffer
-        .post_return(&mut store)
-        .expect("finish choose-buffer false call");
 
     let is_buffer = instance
         .get_typed_func::<(Vec<u8>,), (bool,)>(&mut store, "is-buffer")
@@ -811,9 +740,6 @@ fn package_check_and_run(
             .expect("check Buffer identity"),
         (true,)
     );
-    is_buffer
-        .post_return(&mut store)
-        .expect("finish is-buffer call");
 
     let call_host_buffer = instance
         .get_typed_func::<(Vec<u8>,), (Vec<u8>,)>(&mut store, "call-host-buffer")
@@ -824,9 +750,6 @@ fn package_check_and_run(
             .expect("call host Buffer"),
         (vec![17, 255, 0],)
     );
-    call_host_buffer
-        .post_return(&mut store)
-        .expect("finish host Buffer call");
 
     let echo_bools = instance
         .get_typed_func::<(Vec<bool>,), (Vec<bool>,)>(&mut store, "echo-bools")
@@ -837,9 +760,6 @@ fn package_check_and_run(
             .expect("echo Bool List"),
         (vec![true, false, true],)
     );
-    echo_bools
-        .post_return(&mut store)
-        .expect("finish echo-bools call");
 
     let echo_numbers = instance
         .get_typed_func::<(Vec<f64>,), (Vec<f64>,)>(&mut store, "echo-numbers")
@@ -851,9 +771,6 @@ fn package_check_and_run(
                 .expect("echo Number List"),
             (numbers,)
         );
-        echo_numbers
-            .post_return(&mut store)
-            .expect("finish echo-numbers call");
     }
 
     let call_host_numbers = instance
@@ -865,9 +782,6 @@ fn package_check_and_run(
             .expect("call host Number List"),
         (vec![7.0, -2.5, 1.0],)
     );
-    call_host_numbers
-        .post_return(&mut store)
-        .expect("finish host Number List call");
 
     let echo_texts = instance
         .get_typed_func::<(Vec<String>,), (Vec<String>,)>(&mut store, "echo-texts")
@@ -879,9 +793,6 @@ fn package_check_and_run(
             .expect("echo String List"),
         (texts,)
     );
-    echo_texts
-        .post_return(&mut store)
-        .expect("finish echo-texts call");
 
     let echo_buffers = instance
         .get_typed_func::<(Vec<Vec<u8>>,), (Vec<Vec<u8>>,)>(&mut store, "echo-buffers")
@@ -893,9 +804,6 @@ fn package_check_and_run(
             .expect("echo Buffer List"),
         (buffers,)
     );
-    echo_buffers
-        .post_return(&mut store)
-        .expect("finish echo-buffers call");
 
     let echo_number_lists = instance
         .get_typed_func::<(Vec<Vec<f64>>,), (Vec<Vec<f64>>,)>(&mut store, "echo-number-lists")
@@ -907,9 +815,6 @@ fn package_check_and_run(
             .expect("echo nested Number List"),
         (nested,)
     );
-    echo_number_lists
-        .post_return(&mut store)
-        .expect("finish nested Number List call");
 
     let choose_number = instance
         .get_typed_func::<(bool, f64, f64), (f64,)>(&mut store, "choose-number")
@@ -920,18 +825,12 @@ fn package_check_and_run(
             .expect("choose true branch"),
         (3.0,)
     );
-    choose_number
-        .post_return(&mut store)
-        .expect("finish choose-number true call");
     assert_eq!(
         choose_number
             .call(&mut store, (false, 3.0, 4.0))
             .expect("choose false branch"),
         (4.0,)
     );
-    choose_number
-        .post_return(&mut store)
-        .expect("finish choose-number false call");
 
     let echo = instance
         .get_typed_func::<(String,), (String,)>(&mut store, "echo-text")
@@ -941,7 +840,6 @@ fn package_check_and_run(
             .expect("call echo-text"),
         ("Calcit".to_owned(),)
     );
-    echo.post_return(&mut store).expect("finish echo-text call");
 
     let call_host_echo = instance
         .get_typed_func::<(String,), (String,)>(&mut store, "call-host-echo")
@@ -952,9 +850,6 @@ fn package_check_and_run(
             .expect("call host echo"),
         ("Agent".to_owned(),)
     );
-    call_host_echo
-        .post_return(&mut store)
-        .expect("finish host echo call");
 
     output
 }
