@@ -63,15 +63,19 @@ fn core_module() -> Vec<u8> {
 }
 
 fn core_module_with_offset(offset: i32) -> Vec<u8> {
+    core_module_with_offset_and_import(offset, "host")
+}
+
+fn core_module_with_offset_and_import(offset: i32, import_module: &str) -> Vec<u8> {
     wat::parse_str(format!(
         r#"
         (module
-          (import "host" "add-one" (func $host-add-one (param f64) (result f64)))
-          (import "host" "bool-not" (func $host-bool-not (param i32) (result i32)))
-          (import "host" "buffer" (func $host-buffer (param i32 i32 i32)))
-          (import "host" "echo" (func $host-echo (param i32 i32 i32)))
-          (import "host" "numbers" (func $host-numbers (param i32 i32 i32)))
-          (import "host" "numeric-scalars" (func $host-numeric-scalars
+          (import "{import_module}" "add-one" (func $host-add-one (param f64) (result f64)))
+          (import "{import_module}" "bool-not" (func $host-bool-not (param i32) (result i32)))
+          (import "{import_module}" "buffer" (func $host-buffer (param i32 i32 i32)))
+          (import "{import_module}" "echo" (func $host-echo (param i32 i32 i32)))
+          (import "{import_module}" "numbers" (func $host-numbers (param i32 i32 i32)))
+          (import "{import_module}" "numeric-scalars" (func $host-numeric-scalars
             (param f32 f64 i32 i32 i64 i32 i32 i32 i64 i32 i32)))
           (memory (export "memory") 1)
           (global $heap (mut i32) (i32.const 1024))
@@ -266,6 +270,40 @@ fn packages_checks_and_runs_recursive_list_and_scalar_component() {
     if let Ok(path) = std::env::var("CALCIT_BINDGEN_COMPONENT_OUTPUT") {
         fs::copy(output.join(COMPONENT_FILE), path).expect("copy Component for toolchain smoke");
     }
+}
+
+#[test]
+fn packages_qualified_component_import_without_losing_its_identity() {
+    let mut contract = component_contract();
+    let InterfaceContract::Component(document) = &mut contract else {
+        panic!("expected Component contract");
+    };
+    for definition in &mut document.definitions {
+        if definition.direction == calcit_bindgen::ComponentDirection::Import {
+            definition.module = Some("calcit:test-host/api".to_owned());
+        }
+    }
+    let temporary = TempDir::new().expect("temporary workspace");
+    let core = temporary.path().join("program.wasm");
+    fs::write(
+        &core,
+        core_module_with_offset_and_import(1, "calcit:test-host/api"),
+    )
+    .expect("write qualified-import core module");
+    let output = temporary.path().join("generated");
+    generate_contract_directory(&contract, Some(&core), &output, &[])
+        .expect("package qualified Component import");
+
+    let engine = Engine::default();
+    let component = Component::from_file(&engine, output.join(COMPONENT_FILE))
+        .expect("load qualified-import Component");
+    let imports = component
+        .component_type()
+        .imports(&engine)
+        .map(|(name, _)| name.to_owned())
+        .collect::<Vec<_>>();
+    assert!(imports.iter().any(|name| name == "calcit:test-host/api"));
+    assert!(!imports.iter().any(|name| name == "calcit-test-host-api"));
 }
 
 #[test]

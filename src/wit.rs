@@ -66,6 +66,7 @@ pub(crate) fn render_component(document: &ComponentDocument) -> Result<String, S
     let world = format!("{package}-world");
     let type_interface = format!("{package}-types");
     let type_names = ComponentWitNames::new(document)?;
+    let import_aliases = component_import_aliases(document)?;
     let mut imports = BTreeMap::<String, Vec<_>>::new();
     let mut exports = Vec::new();
     let mut binding_names = BTreeMap::new();
@@ -97,8 +98,7 @@ pub(crate) fn render_component(document: &ComponentDocument) -> Result<String, S
                         definition.id
                     )
                 })?;
-                let module_name =
-                    exact_component_name(module, &format!("definitions.{}.module", definition.id))?;
+                let module_name = import_aliases[module].clone();
                 let identity = format!("import {module_name}/{symbol}");
                 insert_unique(
                     &mut binding_names,
@@ -170,6 +170,46 @@ pub(crate) fn render_component(document: &ComponentDocument) -> Result<String, S
     }
     output.push_str("}\n");
     Ok(output)
+}
+
+pub(crate) fn component_import_aliases(
+    document: &ComponentDocument,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut aliases = BTreeMap::new();
+    let mut identities = BTreeMap::new();
+    for definition in &document.definitions {
+        if definition.direction != ComponentDirection::Import {
+            continue;
+        }
+        let module = definition.module.as_deref().ok_or_else(|| {
+            format!(
+                "definitions.{}: Component import has no module",
+                definition.id
+            )
+        })?;
+        if aliases.contains_key(module) {
+            continue;
+        }
+        let path = format!("definitions.{}.module", definition.id);
+        let alias = match exact_component_name(module, &path) {
+            Ok(name) => name,
+            Err(original_error) => {
+                let Some((package, interface)) = module.rsplit_once('/') else {
+                    return Err(original_error);
+                };
+                let Some((namespace, package)) = package.split_once(':') else {
+                    return Err(original_error);
+                };
+                exact_component_name(namespace, &path)?;
+                exact_component_name(package, &path)?;
+                exact_component_name(interface, &path)?;
+                exact_component_name(&format!("{namespace}-{package}-{interface}"), &path)?
+            }
+        };
+        insert_unique(&mut identities, &alias, module, "Component import alias")?;
+        aliases.insert(module.to_owned(), alias);
+    }
+    Ok(aliases)
 }
 
 fn render_component_signature(

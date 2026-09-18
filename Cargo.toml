@@ -32,6 +32,7 @@ tempfile = "3"
 tokio = { version = "1", features = ["time"], optional = true }
 md5 = "0.7"
 wasmparser = "0.258"
+wasm-encoder = { version = "0.258", features = ["wasmparser"] }
 wasmtime = { version = "=47.0.4", default-features = false, features = ["component-model", "component-model-async", "cranelift", "runtime", "std"], optional = true }
 wasmtime-wasi-http = { version = "=47.0.4", default-features = false, features = ["default-send-request", "p2"], optional = true }
 wit-component = "0.258"
