@@ -134,7 +134,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "calcit-bindgen"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "calcit_native_ffi",
@@ -148,6 +148,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "wasm-encoder 0.258.0",
  "wasmparser 0.258.0",
  "wasmtime",
  "wasmtime-wasi-http",

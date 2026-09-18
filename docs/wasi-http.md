@@ -7,6 +7,9 @@ Calcit 的 HTTP 边界是一个闭合、完整缓冲的 async Component import�
 `calcit-bindgen generate` 发现精确匹配的 contract 后，会在现有 managed output 中额外生成
 `rust/wasmtime_http_adapter.rs`。`check` 会用相同规则守门该文件；接口缺字段、类型变化、改成
 sync 或出现重复 import 都会直接失败，避免宿主与 Calcit 静默漂移。这里没有增加新的命令。
+Component packaging 会保留 `calcit:wasi-http/client` 这一 package-qualified import identity；
+生成阶段使用内部合法 WIT alias 包装 core module，最终 Component 对宿主暴露的仍是原始名称，
+不会要求业务代码改成私有缩写。
 
 ## 宿主依赖
 
@@ -14,7 +17,7 @@ sync 或出现重复 import 都会直接失败，避免宿主与 Calcit 静默�
 
 ```toml
 [dependencies]
-calcit-bindgen = { version = "0.1.1", features = ["wasmtime-http"] }
+calcit-bindgen = { version = "0.1.2", features = ["wasmtime-http"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 wasmtime = { version = "=47.0.4", default-features = false, features = [
   "component-model",
