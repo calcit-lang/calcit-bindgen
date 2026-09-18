@@ -74,6 +74,9 @@ Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String、
 `interface.json`、`wit/interface.wit`、`component/component.wasm` 与 ownership manifest。
 Component v3 的 `invocation` 会被显式校验；`sync` 生成普通 `func`，`async` 生成 WASI 0.3 原生
 `async func`。打包仍要求 core module 实现对应的 Canonical ABI，缺少 async builtin wiring 时会在写入产物前失败。
+仓库内 Wasmtime 47 验收会实际调用 async export、typed Result success/error，并让 concurrent async host import
+至少挂起一次后通过 waitable 生命周期恢复。主动取消与完整 post-return ownership 仍属于 0.16.0 后续验收，
+不因当前执行 smoke 通过而视为完成。
 manifest 同时记录 contract digest、core module digest 和三个 managed artifacts。
 输入 core module 的 import/export、memory、`cabi_realloc` 或 Canonical ABI 签名不匹配时，
 命令会在创建或替换输出目录前失败。`check` 会重新编码并保持只读，因此也能发现 core module
@@ -210,6 +213,11 @@ Component v3 `invocation` is validated explicitly. `sync` emits ordinary
 `func` declarations while `async` emits native WASI 0.3 `async func`
 declarations. Packaging still requires the core module to implement the matching
 Canonical ABI and fails before writing artifacts when async builtin wiring is missing.
+The in-repository Wasmtime 47 acceptance invokes an async export, typed Result
+success/error, and a concurrent async host import that suspends at least once
+before resuming through the waitable lifecycle. Active cancellation and complete
+post-return ownership remain later 0.16.0 acceptance work and are not claimed by
+this execution smoke.
 
 The Rust backend accepts only `native + sync + edn-buffer-v1`. It emits
 namespace-qualified Rust names, a typed service trait, codecs for the strict
