@@ -306,7 +306,12 @@ fn is_textual(headers: &http::HeaderMap) -> bool {
     let Ok(value) = value.to_str() else {
         return false;
     };
-    let media_type = value.split(';').next().unwrap_or(value).trim();
+    let media_type = value
+        .split(';')
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .to_ascii_lowercase();
     media_type.starts_with("text/")
         || media_type == "application/json"
         || media_type.ends_with("+json")

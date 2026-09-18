@@ -3,7 +3,7 @@
 use calcit_bindgen::wasmtime_http::{
     HttpBody, HttpError, HttpMethod, HttpRequest, WasiHttpConfig, send,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
@@ -50,10 +50,15 @@ async fn serve_once(body: &'static [u8], content_type: &'static str) -> String {
         .expect("bind local HTTP server");
     let address = listener.local_addr().expect("local HTTP address");
     tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.expect("accept HTTP request");
-        let mut request = vec![0; 4096];
-        let length = stream.read(&mut request).await.expect("read HTTP request");
-        assert!(String::from_utf8_lossy(&request[..length]).starts_with("GET /items HTTP/1.1"));
+        let (stream, _) = listener.accept().await.expect("accept HTTP request");
+        let mut reader = BufReader::new(stream);
+        let mut request_line = String::new();
+        reader
+            .read_line(&mut request_line)
+            .await
+            .expect("read HTTP request line");
+        assert_eq!(request_line, "GET /items HTTP/1.1\r\n");
+        let mut stream = reader.into_inner();
         let head = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
             body.len()
@@ -116,7 +121,7 @@ async fn adapter_links_the_closed_component_contract() {
 
 #[tokio::test]
 async fn performs_real_bounded_http_request() {
-    let origin = serve_once(br#"{"ok":true}"#, "application/json").await;
+    let origin = serve_once(br#"{"ok":true}"#, "Application/JSON; Charset=UTF-8").await;
     let config = WasiHttpConfig::default()
         .allow_origin(&origin)
         .expect("allow local HTTP origin");

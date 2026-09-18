@@ -234,12 +234,12 @@ fn require_fields(
     name: &str,
 ) -> Result<(), String> {
     if actual.len() != expected.len()
-        || expected.iter().any(|(field_name, field_type)| {
-            actual
-                .iter()
-                .find(|field| field.name == *field_name)
-                .is_none_or(|field| field.type_ir != *field_type)
-        })
+        || actual
+            .iter()
+            .zip(expected)
+            .any(|(field, (field_name, field_type))| {
+                field.name != *field_name || field.type_ir != *field_type
+            })
     {
         return Err(format!(
             "{name} does not match the closed buffered HTTP contract"
@@ -254,12 +254,12 @@ fn require_variants(
     name: &str,
 ) -> Result<(), String> {
     if actual.len() != expected.len()
-        || expected.iter().any(|(variant_name, payload)| {
-            actual
-                .iter()
-                .find(|variant| variant.name == *variant_name)
-                .is_none_or(|variant| variant.payload != *payload)
-        })
+        || actual
+            .iter()
+            .zip(expected)
+            .any(|(variant, (variant_name, payload))| {
+                variant.name != *variant_name || variant.payload != *payload
+            })
     {
         return Err(format!(
             "{name} does not match the closed buffered HTTP contract"
@@ -432,6 +432,17 @@ mod tests {
         assert!(
             render(&drifted)
                 .expect_err("reject contract drift")
+                .contains("HttpRequest")
+        );
+
+        let mut reordered = document();
+        let Declaration::Struct { fields, .. } = &mut reordered.declarations[3] else {
+            panic!("HttpRequest fixture must be a struct")
+        };
+        fields.swap(0, 1);
+        assert!(
+            render(&reordered)
+                .expect_err("reject ABI field reordering")
                 .contains("HttpRequest")
         );
     }
