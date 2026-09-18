@@ -72,7 +72,8 @@ calcit project/calcit.cirru ffi export --boundary component --format json \
 
 Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String、递归同质 `List<T>`、闭合单态 `Option<T>` / `Result<T,E>`、单态 Struct record、闭合单态 Enum variant 与 Unit 结果，并产生规范化
 `interface.json`、`wit/interface.wit`、`component/component.wasm` 与 ownership manifest。
-Component v3 的 `invocation` 会被显式校验；当前 packaging backend 只接受 `sync`，并在写入产物前明确拒绝 `async`。
+Component v3 的 `invocation` 会被显式校验；`sync` 生成普通 `func`，`async` 生成 WASI 0.3 原生
+`async func`。打包仍要求 core module 实现对应的 Canonical ABI，缺少 async builtin wiring 时会在写入产物前失败。
 manifest 同时记录 contract digest、core module digest 和三个 managed artifacts。
 输入 core module 的 import/export、memory、`cabi_realloc` 或 Canonical ABI 签名不匹配时，
 命令会在创建或替换输出目录前失败。`check` 会重新编码并保持只读，因此也能发现 core module
@@ -126,10 +127,11 @@ WIT 将 Calcit Buffer 严格映射为 `list<u8>`，将 Calcit Number 映射为�
 | Enum | codecs | qualified schema references | qualified generated names | closed monomorphic variants |
 | Generic declarations | yes | applied callable references | yes | unsupported |
 | `native + sync + edn-buffer-v1` | yes | yes | declaration view | interface view |
-| async/callback/resource lifecycle | unsupported | unsupported | unsupported | unsupported |
+| async WIT / async Canonical ABI lifecycle | unsupported | unsupported | unsupported | declarations yes; runnable lifecycle unsupported |
 
 非目标包括猜测 Dynamic、把 resource 伪装成 Struct、生成双向 Component bindings，以及在本仓库
-重新定义 Calcit Interface IR 或 native ABI。
+重新定义 Calcit Interface IR 或 native ABI。当前 async 支持仅限 WIT declaration 渲染；async Canonical
+ABI wiring、可运行 Component、callback 与 resource lifecycle 仍是明确的非目标。
 
 消费 crate 需要依赖 `calcit_native_ffi = "0.1.3"` 和 `cirru_edn = "0.8.2"`，在 crate
 根部 `include!` 生成文件，实现其中的 package service trait，然后调用生成的
@@ -204,8 +206,10 @@ and a manifest containing both contract and core-module digests. Core imports,
 exports, memory, `cabi_realloc`, and Canonical ABI signatures are checked before
 the managed output directory is created or replaced. `check` deterministically
 re-encodes the component without modifying the output directory.
-Component v3 `invocation` is validated explicitly. The current packaging
-backend accepts only `sync` and rejects `async` before writing artifacts.
+Component v3 `invocation` is validated explicitly. `sync` emits ordinary
+`func` declarations while `async` emits native WASI 0.3 `async func`
+declarations. Packaging still requires the core module to implement the matching
+Canonical ABI and fails before writing artifacts when async builtin wiring is missing.
 
 The Rust backend accepts only `native + sync + edn-buffer-v1`. It emits
 namespace-qualified Rust names, a typed service trait, codecs for the strict
@@ -232,9 +236,11 @@ one-to-one without name- or sample-based inference.
 Recursive List smokes cover empty and nested-empty lists plus Bool, Number,
 String, and Buffer items without a Dynamic fallback.
 
-The capability matrix above is normative for the current MVP. Async, callback,
-resource lifecycle, Dynamic guessing, bidirectional Component bindings, and
-ownership of the Interface IR or native ABI are explicit non-goals.
+The capability matrix above is normative for the current MVP. Async WIT
+declaration rendering is supported; async Canonical ABI wiring, runnable async
+Components, callback and resource lifecycle, Dynamic guessing, bidirectional
+Component bindings, and ownership of the Interface IR or native ABI remain
+explicit non-goals.
 
 Consumer crates depend on `calcit_native_ffi = "0.1.3"` and
 `cirru_edn = "0.8.2"`, `include!` the generated file at crate root, implement

@@ -79,12 +79,6 @@ pub(crate) fn render_component(document: &ComponentDocument) -> Result<String, S
                 definition.id
             ));
         }
-        if definition.invocation == Some(ComponentInvocation::Async) {
-            return Err(format!(
-                "definitions.{}: async Component invocation is not yet representable by the packaging backend",
-                definition.id
-            ));
-        }
         let signature = definition.signature.as_ref().ok_or_else(|| {
             format!(
                 "definitions.{}: supported Component definition has no signature",
@@ -116,6 +110,7 @@ pub(crate) fn render_component(document: &ComponentDocument) -> Result<String, S
                     symbol,
                     definition.id.as_str(),
                     signature,
+                    definition.invocation,
                 ));
             }
             ComponentDirection::Export => {
@@ -126,7 +121,12 @@ pub(crate) fn render_component(document: &ComponentDocument) -> Result<String, S
                     &definition.id,
                     "Component binding",
                 )?;
-                exports.push((symbol, definition.id.as_str(), signature));
+                exports.push((
+                    symbol,
+                    definition.id.as_str(),
+                    signature,
+                    definition.invocation,
+                ));
             }
         }
     }
@@ -148,23 +148,23 @@ pub(crate) fn render_component(document: &ComponentDocument) -> Result<String, S
     for (module, functions) in imports {
         writeln!(output, "  import {module}: interface {{").expect("write to String");
         render_component_type_use(&mut output, &type_interface, &type_names, "    ");
-        for (symbol, id, signature) in functions {
+        for (symbol, id, signature, invocation) in functions {
             writeln!(output, "    /// Calcit definition: {id}").expect("write to String");
             writeln!(
                 output,
                 "    {symbol}: {};",
-                render_component_signature(signature, id, &type_names)?
+                render_component_signature(signature, invocation, id, &type_names)?
             )
             .expect("write to String");
         }
         output.push_str("  }\n");
     }
-    for (symbol, id, signature) in exports {
+    for (symbol, id, signature, invocation) in exports {
         writeln!(output, "  /// Calcit definition: {id}").expect("write to String");
         writeln!(
             output,
             "  export {symbol}: {};",
-            render_component_signature(signature, id, &type_names)?
+            render_component_signature(signature, invocation, id, &type_names)?
         )
         .expect("write to String");
     }
@@ -174,6 +174,7 @@ pub(crate) fn render_component(document: &ComponentDocument) -> Result<String, S
 
 fn render_component_signature(
     signature: &FunctionSignature,
+    invocation: Option<ComponentInvocation>,
     definition_id: &str,
     names: &ComponentWitNames,
 ) -> Result<String, String> {
@@ -197,11 +198,16 @@ fn render_component_signature(
         .collect::<Result<Vec<_>, String>>()?
         .join(", ");
     let result_path = format!("definitions.{definition_id}.signature.result");
+    let function = if invocation == Some(ComponentInvocation::Async) {
+        "async func"
+    } else {
+        "func"
+    };
     if matches!(signature.result, Type::Unit) {
-        Ok(format!("func({parameters})"))
+        Ok(format!("{function}({parameters})"))
     } else {
         let result = render_component_type(&signature.result, names, &result_path)?;
-        Ok(format!("func({parameters}) -> {result}"))
+        Ok(format!("{function}({parameters}) -> {result}"))
     }
 }
 
@@ -632,35 +638,84 @@ mod tests {
     };
 
     #[test]
-    fn component_v3_async_invocation_fails_before_packaging() {
+    fn component_v3_async_invocation_renders_native_async_wit() {
         let document = ComponentDocument {
             version: 3,
             package: "demo".to_owned(),
             package_version: "0.0.0".to_owned(),
             declarations: vec![],
-            definitions: vec![ComponentDefinition {
-                id: "app.main/fetch".to_owned(),
-                namespace: "app.main".to_owned(),
-                name: "fetch".to_owned(),
-                doc: String::new(),
-                logical_schema: String::new(),
-                direction: ComponentDirection::Export,
-                invocation: Some(ComponentInvocation::Async),
-                module: None,
-                symbol: "fetch".to_owned(),
-                signature: Some(FunctionSignature {
-                    parameters: vec![],
-                    result: Type::String,
-                }),
-                status: DefinitionStatus::Supported,
-                diagnostic_codes: vec![],
-            }],
+            definitions: vec![
+                ComponentDefinition {
+                    id: "app.main/fetch".to_owned(),
+                    namespace: "app.main".to_owned(),
+                    name: "fetch".to_owned(),
+                    doc: String::new(),
+                    logical_schema: String::new(),
+                    direction: ComponentDirection::Export,
+                    invocation: Some(ComponentInvocation::Async),
+                    module: None,
+                    symbol: "fetch".to_owned(),
+                    signature: Some(FunctionSignature {
+                        parameters: vec![],
+                        result: Type::String,
+                    }),
+                    status: DefinitionStatus::Supported,
+                    diagnostic_codes: vec![],
+                },
+                ComponentDefinition {
+                    id: "app.main/load".to_owned(),
+                    namespace: "app.main".to_owned(),
+                    name: "load".to_owned(),
+                    doc: String::new(),
+                    logical_schema: String::new(),
+                    direction: ComponentDirection::Import,
+                    invocation: Some(ComponentInvocation::Async),
+                    module: Some("host-storage".to_owned()),
+                    symbol: "load".to_owned(),
+                    signature: Some(FunctionSignature {
+                        parameters: vec![Parameter {
+                            position: 0,
+                            type_ir: Type::String,
+                        }],
+                        result: Type::String,
+                    }),
+                    status: DefinitionStatus::Supported,
+                    diagnostic_codes: vec![],
+                },
+                ComponentDefinition {
+                    id: "app.main/version".to_owned(),
+                    namespace: "app.main".to_owned(),
+                    name: "version".to_owned(),
+                    doc: String::new(),
+                    logical_schema: String::new(),
+                    direction: ComponentDirection::Export,
+                    invocation: Some(ComponentInvocation::Sync),
+                    module: None,
+                    symbol: "version".to_owned(),
+                    signature: Some(FunctionSignature {
+                        parameters: vec![],
+                        result: Type::String,
+                    }),
+                    status: DefinitionStatus::Supported,
+                    diagnostic_codes: vec![],
+                },
+            ],
         };
 
-        let error = render_component(&document)
-            .expect_err("async Component invocation must not reach synchronous packaging");
-        assert!(error.contains("definitions.app.main/fetch"));
-        assert!(error.contains("async Component invocation"));
+        let wit = render_component(&document).expect("async Component invocation should render");
+        assert!(
+            wit.contains("export fetch: async func() -> string;"),
+            "{wit}"
+        );
+        assert!(
+            wit.contains("load: async func(arg0: string) -> string;"),
+            "{wit}"
+        );
+        assert!(wit.contains("export version: func() -> string;"), "{wit}");
+        let mut resolve = wit_parser::Resolve::default();
+        resolve
+            .push_str("component-async.wit", &wit)
+            .expect("generated WASI 0.3 async WIT should parse");
     }
 
     #[test]
