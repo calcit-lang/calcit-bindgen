@@ -127,10 +127,11 @@ WIT 将 Calcit Buffer 严格映射为 `list<u8>`，将 Calcit Number 映射为�
 | Enum | codecs | qualified schema references | qualified generated names | closed monomorphic variants |
 | Generic declarations | yes | applied callable references | yes | unsupported |
 | `native + sync + edn-buffer-v1` | yes | yes | declaration view | interface view |
-| async/callback/resource lifecycle | unsupported | unsupported | unsupported | unsupported |
+| async WIT / async Canonical ABI lifecycle | unsupported | unsupported | unsupported | declarations yes; runnable lifecycle unsupported |
 
 非目标包括猜测 Dynamic、把 resource 伪装成 Struct、生成双向 Component bindings，以及在本仓库
-重新定义 Calcit Interface IR 或 native ABI。
+重新定义 Calcit Interface IR 或 native ABI。当前 async 支持仅限 WIT declaration 渲染；async Canonical
+ABI wiring、可运行 Component、callback 与 resource lifecycle 仍是明确的非目标。
 
 消费 crate 需要依赖 `calcit_native_ffi = "0.1.3"` 和 `cirru_edn = "0.8.2"`，在 crate
 根部 `include!` 生成文件，实现其中的 package service trait，然后调用生成的
@@ -235,9 +236,11 @@ one-to-one without name- or sample-based inference.
 Recursive List smokes cover empty and nested-empty lists plus Bool, Number,
 String, and Buffer items without a Dynamic fallback.
 
-The capability matrix above is normative for the current MVP. Async, callback,
-resource lifecycle, Dynamic guessing, bidirectional Component bindings, and
-ownership of the Interface IR or native ABI are explicit non-goals.
+The capability matrix above is normative for the current MVP. Async WIT
+declaration rendering is supported; async Canonical ABI wiring, runnable async
+Components, callback and resource lifecycle, Dynamic guessing, bidirectional
+Component bindings, and ownership of the Interface IR or native ABI remain
+explicit non-goals.
 
 Consumer crates depend on `calcit_native_ffi = "0.1.3"` and
 `cirru_edn = "0.8.2"`, `include!` the generated file at crate root, implement
