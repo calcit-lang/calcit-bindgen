@@ -9,19 +9,38 @@ readme = "README.md"
 keywords = ["calcit", "ffi", "bindgen", "wit"]
 categories = ["development-tools::ffi", "command-line-utilities"]
 
+[features]
+default = []
+wasmtime-http = [
+  "dep:bytes",
+  "dep:http",
+  "dep:http-body-util",
+  "dep:tokio",
+  "dep:wasmtime",
+  "dep:wasmtime-wasi-http",
+]
+
 [dependencies]
+bytes = { version = "1", optional = true }
 clap = { version = "4.5", features = ["derive"] }
 cirru_edn = "0.8.2"
+http = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
+tokio = { version = "1", features = ["time"], optional = true }
 md5 = "0.7"
 wasmparser = "0.258"
+wasmtime = { version = "=47.0.4", default-features = false, features = ["component-model", "component-model-async", "cranelift", "runtime", "std"], optional = true }
+wasmtime-wasi-http = { version = "=47.0.4", default-features = false, features = ["default-send-request", "p2"], optional = true }
 wit-component = "0.258"
 wit-parser = "0.258"
 
 [dev-dependencies]
 calcit_native_ffi = "0.1.3"
 libloading = "0.8"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread"] }
 wat = "1.258"
 wasmtime = { version = "=47.0.4", default-features = false, features = ["component-model", "component-model-async", "cranelift", "runtime", "std"] }
+wit-component = { version = "0.258", features = ["dummy-module"] }

@@ -72,12 +72,16 @@ calcit project/calcit.cirru ffi export --boundary component --format json \
 
 Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String、递归同质 `List<T>`、闭合单态 `Option<T>` / `Result<T,E>`、单态 Struct record、闭合单态 Enum variant 与 Unit 结果，并产生规范化
 `interface.json`、`wit/interface.wit`、`component/component.wasm` 与 ownership manifest。
+当 contract 包含精确的 `calcit:wasi-http/client.request` 闭合接口时，还会生成
+`rust/wasmtime_http_adapter.rs`；该文件复用 crate 的 `wasmtime-http` feature，不增加命令入口。
+adapter 默认拒绝全部网络 origin，调用方必须逐个授予 `scheme://authority`，并由每次请求的
+`max-response-bytes` 约束完整缓冲。完整接入方式见 [WASI HTTP 文档](docs/wasi-http.md)。
 Component v3 的 `invocation` 会被显式校验；`sync` 生成普通 `func`，`async` 生成 WASI 0.3 原生
 `async func`。打包仍要求 core module 实现对应的 Canonical ABI，缺少 async builtin wiring 时会在写入产物前失败。
 仓库内 Wasmtime 47 验收会实际调用 async export、typed Result success/error，并让 concurrent async host import
 至少挂起一次后通过 waitable 生命周期恢复。主动取消与完整 post-return ownership 仍属于 0.16.0 后续验收，
 不因当前执行 smoke 通过而视为完成。
-manifest 同时记录 contract digest、core module digest 和三个 managed artifacts。
+manifest 同时记录 contract digest、core module digest 和全部 managed artifacts。
 输入 core module 的 import/export、memory、`cabi_realloc` 或 Canonical ABI 签名不匹配时，
 命令会在创建或替换输出目录前失败。`check` 会重新编码并保持只读，因此也能发现 core module
 变化造成的 stale artifact。
@@ -219,6 +223,12 @@ success/error, and a concurrent async host import that suspends at least once
 before resuming through the waitable lifecycle. Active cancellation and complete
 post-return ownership remain later 0.16.0 acceptance work and are not claimed by
 this execution smoke.
+
+When the contract contains the exact closed `calcit:wasi-http/client.request`
+interface, generation also owns `rust/wasmtime_http_adapter.rs`. The adapter is
+backed by the stable WASI 0.2 HTTP transport in Wasmtime 47, denies all origins
+by default, and requires explicit per-request response limits. See the Chinese
+[WASI HTTP guide](docs/wasi-http.md) for integration details.
 
 The Rust backend accepts only `native + sync + edn-buffer-v1`. It emits
 namespace-qualified Rust names, a typed service trait, codecs for the strict

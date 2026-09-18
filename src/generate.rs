@@ -16,6 +16,7 @@ pub const CALCIT_BINDINGS_FILE: &str = "calcit/bindings.cirru";
 pub const TYPESCRIPT_BINDINGS_FILE: &str = "typescript/bindings.d.ts";
 pub const WIT_BINDINGS_FILE: &str = "wit/interface.wit";
 pub const COMPONENT_FILE: &str = "component/component.wasm";
+pub const WASMTIME_HTTP_ADAPTER_FILE: &str = "rust/wasmtime_http_adapter.rs";
 pub const MANIFEST_FILE: &str = "calcit-bindgen.manifest.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 3;
 const GENERATOR_NAME: &str = "calcit-bindgen";
@@ -427,11 +428,14 @@ fn render_component(
     })?;
     let core_module_digest = digest(&core_module_bytes);
     let packaged = crate::component::package(&canonical, &core_module_bytes)?;
-    let files = BTreeMap::from([
+    let mut files = BTreeMap::from([
         (INTERFACE_FILE.to_owned(), interface),
         (WIT_BINDINGS_FILE.to_owned(), packaged.wit.into_bytes()),
         (COMPONENT_FILE.to_owned(), packaged.component),
     ]);
+    if let Some(adapter) = crate::http_adapter::render(&canonical)? {
+        files.insert(WASMTIME_HTTP_ADAPTER_FILE.to_owned(), adapter.into_bytes());
+    }
     let manifest = Manifest {
         schema_version: MANIFEST_SCHEMA_VERSION,
         generator: GENERATOR_NAME.to_owned(),
