@@ -14,7 +14,7 @@ sync 或出现重复 import 都会直接失败，避免宿主与 Calcit 静默�
 
 ```toml
 [dependencies]
-calcit-bindgen = { version = "0.1.1", features = ["wasmtime-http"] }
+calcit-bindgen = { version = "0.1.2", features = ["wasmtime-http"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 wasmtime = { version = "=47.0.4", default-features = false, features = [
   "component-model",
