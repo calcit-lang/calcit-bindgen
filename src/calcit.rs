@@ -119,6 +119,9 @@ fn render_type(type_ir: &Type) -> Result<String, String> {
         Type::Float64 => Ok("'Float64".to_owned()),
         Type::String => Ok("'String".to_owned()),
         Type::Buffer => Ok("'Buffer".to_owned()),
+        Type::ReadableByteStream => {
+            Err("ReadableByteStream is only supported by the Component WIT backend".to_owned())
+        }
         Type::List { item } => Ok(format!("(:: 'List {})", render_type(item)?)),
         Type::Option { item } => Ok(format!("(:: 'Option {})", render_type(item)?)),
         Type::Result { ok, error } => Ok(format!(

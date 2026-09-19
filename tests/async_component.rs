@@ -9,10 +9,10 @@ use std::thread::{self, Thread};
 use calcit_bindgen::{
     COMPONENT_FILE, ComponentDefinition, ComponentDirection, ComponentDocument,
     ComponentInvocation, DefinitionStatus, FunctionSignature, InterfaceContract, Parameter, Type,
-    generate_contract_directory,
+    WIT_BINDINGS_FILE, generate_contract_directory,
 };
 use tempfile::TempDir;
-use wasmtime::component::{Component, Linker};
+use wasmtime::component::{Component, Linker, StreamReader};
 use wasmtime::{Config, Engine, Store};
 
 struct ThreadWaker(Thread);
@@ -222,6 +222,65 @@ fn core_module() -> Vec<u8> {
     .expect("compile async Canonical ABI core fixture")
 }
 
+fn readable_byte_stream_contract() -> InterfaceContract {
+    InterfaceContract::Component(ComponentDocument {
+        version: 4,
+        package: "stream-smoke".into(),
+        package_version: "0.0.0".into(),
+        declarations: Vec::new(),
+        definitions: vec![definition(
+            "consume",
+            ComponentDirection::Export,
+            None,
+            vec![Type::ReadableByteStream],
+            Type::Unit,
+        )],
+    })
+}
+
+fn readable_byte_stream_core_module() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+          (import "[export]$root" "[task-return]consume"
+            (func $return-consume))
+          (import "[export]$root" "[stream-read-0]consume"
+            (func $stream-read (param i32 i32 i32) (result i32)))
+          (import "[export]$root" "[stream-cancel-read-0]consume"
+            (func $stream-cancel-read (param i32) (result i32)))
+          (import "[export]$root" "[stream-drop-readable-0]consume"
+            (func $stream-drop-readable (param i32)))
+          (memory (export "memory") 1)
+          (global $heap (mut i32) (i32.const 1024))
+          (func (export "cabi_realloc")
+            (param $old i32) (param $old-size i32) (param $align i32) (param $new-size i32)
+            (result i32)
+            (local $result i32)
+            global.get $heap
+            local.get $align
+            i32.const 1
+            i32.sub
+            i32.add
+            local.get $align
+            i32.const 1
+            i32.sub
+            i32.const -1
+            i32.xor
+            i32.and
+            local.tee $result
+            local.get $new-size
+            i32.add
+            global.set $heap
+            local.get $result)
+          (func (export "[async-lift-stackful]consume") (param $stream i32)
+            local.get $stream
+            call $stream-drop-readable
+            call $return-consume))
+        "#,
+    )
+    .expect("compile readable byte-stream Canonical ABI core fixture")
+}
+
 #[test]
 fn packages_and_executes_async_export_and_import_with_wasmtime() {
     let temporary = TempDir::new().expect("temporary workspace");
@@ -310,4 +369,45 @@ fn packages_and_executes_async_export_and_import_with_wasmtime() {
         );
     });
     assert!(host_poll_count.load(Ordering::SeqCst) >= 2);
+}
+
+#[test]
+fn packages_readable_byte_stream_with_canonical_abi_builtins() {
+    let temporary = TempDir::new().expect("temporary workspace");
+    let core = temporary.path().join("program.wasm");
+    fs::write(&core, readable_byte_stream_core_module()).expect("write core module");
+    let output = temporary.path().join("generated");
+    generate_contract_directory(&readable_byte_stream_contract(), Some(&core), &output, &[])
+        .expect("package readable byte-stream Component");
+
+    let wit = fs::read_to_string(output.join(WIT_BINDINGS_FILE)).expect("read generated WIT");
+    assert!(wit.contains("export consume: async func(arg0: stream<u8>);"));
+
+    let mut config = Config::new();
+    config.wasm_component_model_async(true);
+    config.wasm_component_model_async_stackful(true);
+    config.wasm_component_model_more_async_builtins(true);
+    let engine = Engine::new(&config).expect("create async Component engine");
+    let component = Component::from_file(&engine, output.join(COMPONENT_FILE))
+        .expect("load readable byte-stream Component");
+    let linker = Linker::new(&engine);
+    let mut store = Store::new(&engine, ());
+
+    block_on(async {
+        let instance = linker
+            .instantiate_async(&mut store, &component)
+            .await
+            .expect("instantiate readable byte-stream Component");
+        let consume = instance
+            .get_typed_func::<(StreamReader<u8>,), ()>(&mut store, "consume")
+            .expect("typed readable byte-stream export");
+        let reader =
+            StreamReader::new(&mut store, vec![1_u8, 2, 3]).expect("create host byte stream");
+        store
+            .run_concurrent(async |accessor| consume.call_concurrent(accessor, (reader,)).await)
+            .await
+            .expect("run concurrent guest call")
+            .expect("consume readable byte stream");
+    });
+    store.assert_concurrent_state_empty();
 }

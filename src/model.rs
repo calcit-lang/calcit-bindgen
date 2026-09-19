@@ -228,6 +228,7 @@ pub enum Type {
     Float64,
     String,
     Buffer,
+    ReadableByteStream,
     List { item: Box<Type> },
     Option { item: Box<Type> },
     Result { ok: Box<Type>, error: Box<Type> },

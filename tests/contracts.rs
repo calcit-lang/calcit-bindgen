@@ -1,8 +1,8 @@
 use calcit_bindgen::{
-    ChangeKind, ComponentDocument, ComponentInvocation, Declaration, Definition, DefinitionStatus,
-    Document, FunctionSignature, InterfaceContract, Lowering, Parameter, StructField, Type,
-    compare, compare_component, load_contract, load_document, validate_component_document,
-    validate_document,
+    ChangeKind, ComponentDefinition, ComponentDirection, ComponentDocument, ComponentInvocation,
+    Declaration, Definition, DefinitionStatus, Document, EnumVariant, FunctionSignature,
+    InterfaceContract, Lowering, Parameter, StructField, Type, compare, compare_component,
+    load_contract, load_document, validate_component_document, validate_document,
 };
 use std::fs;
 use std::process::Command;
@@ -226,7 +226,7 @@ fn rejects_old_component_contract_versions() {
     assert!(
         validate_component_document(&document)
             .unwrap_err()
-            .contains("supports v2 and v3")
+            .contains("supports v2, v3, and v4")
     );
 }
 
@@ -249,6 +249,103 @@ fn validates_component_v3_invocation_contracts() {
             .unwrap_err()
             .contains("must declare invocation")
     );
+}
+
+fn component_v4_with_declaration(
+    declaration: Declaration,
+    boundary_type: Type,
+    use_as_result: bool,
+) -> ComponentDocument {
+    ComponentDocument {
+        version: 4,
+        package: "stream-declaration".to_owned(),
+        package_version: "0.0.0".to_owned(),
+        declarations: vec![declaration],
+        definitions: vec![ComponentDefinition {
+            id: "stream-declaration/consume".to_owned(),
+            namespace: "stream-declaration".to_owned(),
+            name: "consume".to_owned(),
+            doc: String::new(),
+            logical_schema: String::new(),
+            direction: ComponentDirection::Export,
+            invocation: Some(ComponentInvocation::Async),
+            module: None,
+            symbol: "consume".to_owned(),
+            signature: Some(FunctionSignature {
+                parameters: if use_as_result {
+                    Vec::new()
+                } else {
+                    vec![Parameter {
+                        position: 0,
+                        type_ir: boundary_type.clone(),
+                    }]
+                },
+                result: if use_as_result {
+                    boundary_type
+                } else {
+                    Type::Unit
+                },
+            }),
+            status: DefinitionStatus::Supported,
+            diagnostic_codes: Vec::new(),
+        }],
+    }
+}
+
+#[test]
+fn component_v4_rejects_streams_hidden_in_struct_and_enum_declarations() {
+    let structure = Declaration::Struct {
+        id: "stream-declaration/Envelope".to_owned(),
+        namespace: "stream-declaration".to_owned(),
+        name: "Envelope".to_owned(),
+        type_parameters: Vec::new(),
+        fields: vec![StructField {
+            name: "body".to_owned(),
+            type_ir: Type::ReadableByteStream,
+        }],
+    };
+    let structure_ref = Type::Struct {
+        id: "stream-declaration/Envelope".to_owned(),
+        arguments: Vec::new(),
+    };
+    for use_as_result in [false, true] {
+        let error = validate_component_document(&component_v4_with_declaration(
+            structure.clone(),
+            structure_ref.clone(),
+            use_as_result,
+        ))
+        .expect_err("Struct declarations must not hide readable byte streams");
+        assert!(error.contains("Envelope.fields.body"), "{error}");
+    }
+
+    let enumeration = Declaration::Enum {
+        id: "stream-declaration/Payload".to_owned(),
+        namespace: "stream-declaration".to_owned(),
+        name: "Payload".to_owned(),
+        type_parameters: Vec::new(),
+        variants: vec![EnumVariant {
+            name: "body".to_owned(),
+            payload: vec![Type::Option {
+                item: Box::new(Type::ReadableByteStream),
+            }],
+        }],
+    };
+    let enumeration_ref = Type::Enum {
+        id: "stream-declaration/Payload".to_owned(),
+        arguments: Vec::new(),
+    };
+    for use_as_result in [false, true] {
+        let error = validate_component_document(&component_v4_with_declaration(
+            enumeration.clone(),
+            enumeration_ref.clone(),
+            use_as_result,
+        ))
+        .expect_err("Enum declarations must not hide readable byte streams");
+        assert!(
+            error.contains("Payload.variants.body.payload[0]"),
+            "{error}"
+        );
+    }
 }
 
 #[test]

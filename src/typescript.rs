@@ -199,6 +199,9 @@ fn render_type(type_ir: &Type, names: &TypeScriptNames, path: &str) -> Result<St
         | Type::Float64 => Ok("number".to_owned()),
         Type::String => Ok("string".to_owned()),
         Type::Buffer => Ok("Uint8Array".to_owned()),
+        Type::ReadableByteStream => Err(format!(
+            "{path}: ReadableByteStream is only supported by the Component WIT backend"
+        )),
         Type::List { item } => Ok(format!(
             "ReadonlyArray<{}>",
             render_type(item, names, &format!("{path}.item"))?
