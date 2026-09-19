@@ -17,7 +17,7 @@ Component packaging 会保留 `calcit:wasi-http/client` 这一 package-qualified
 
 ```toml
 [dependencies]
-calcit-bindgen = { version = "0.1.2", features = ["wasmtime-http"] }
+calcit-bindgen = { version = "0.1.3", features = ["wasmtime-http"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 wasmtime = { version = "=47.0.4", default-features = false, features = [
   "component-model",
