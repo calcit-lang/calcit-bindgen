@@ -17,6 +17,8 @@ const COMPONENT_INTERFACE_IR_V2_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/component-interface-ir-v2.schema.json";
 const COMPONENT_INTERFACE_IR_V3_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/component-interface-ir-v3.schema.json";
+const COMPONENT_INTERFACE_IR_V4_SCHEMA_ID: &str =
+    "https://calcit-lang.org/schemas/component-interface-ir-v4.schema.json";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -115,7 +117,9 @@ pub fn load_contract(path: impl AsRef<Path>) -> Result<InterfaceContract, String
             .ok_or_else(|| "ffi.export envelope must declare interface_schema".to_owned())?;
         if matches!(
             schema,
-            COMPONENT_INTERFACE_IR_V2_SCHEMA_ID | COMPONENT_INTERFACE_IR_V3_SCHEMA_ID
+            COMPONENT_INTERFACE_IR_V2_SCHEMA_ID
+                | COMPONENT_INTERFACE_IR_V3_SCHEMA_ID
+                | COMPONENT_INTERFACE_IR_V4_SCHEMA_ID
         ) {
             let envelope: ComponentExportEnvelope = serde_json::from_value(value)
                 .map_err(|error| format!("invalid Component ffi.export envelope: {error}"))?;
@@ -307,9 +311,10 @@ fn validate_component_export_envelope(envelope: &ComponentExportEnvelope) -> Res
     let expected_schema = match envelope.data.interface.version {
         2 => COMPONENT_INTERFACE_IR_V2_SCHEMA_ID,
         3 => COMPONENT_INTERFACE_IR_V3_SCHEMA_ID,
+        4 => COMPONENT_INTERFACE_IR_V4_SCHEMA_ID,
         version => {
             return Err(format!(
-                "unsupported Component Interface IR version {version}; calcit-bindgen supports v2 and v3"
+                "unsupported Component Interface IR version {version}; calcit-bindgen supports v2, v3, and v4"
             ));
         }
     };
@@ -523,9 +528,9 @@ pub fn validate_document(document: &Document) -> Result<(), String> {
 }
 
 pub fn validate_component_document(document: &ComponentDocument) -> Result<(), String> {
-    if !matches!(document.version, 2 | 3) {
+    if !matches!(document.version, 2..=4) {
         return Err(format!(
-            "unsupported Component Interface IR version {}; calcit-bindgen supports v2 and v3",
+            "unsupported Component Interface IR version {}; calcit-bindgen supports v2, v3, and v4",
             document.version
         ));
     }
@@ -575,17 +580,17 @@ pub fn validate_component_document(document: &ComponentDocument) -> Result<(), S
     let mut bindings = BTreeSet::new();
     for definition in &document.definitions {
         match (document.version, definition.invocation) {
-            (2, None) | (3, Some(_)) => {}
+            (2, None) | (3 | 4, Some(_)) => {}
             (2, Some(_)) => {
                 return Err(format!(
                     "Component Interface IR v2 definition {} must not declare invocation",
                     definition.id
                 ));
             }
-            (3, None) => {
+            (3 | 4, None) => {
                 return Err(format!(
-                    "Component Interface IR v3 definition {} must declare invocation",
-                    definition.id
+                    "Component Interface IR v{} definition {} must declare invocation",
+                    document.version, definition.id
                 ));
             }
             _ => unreachable!(),
@@ -653,13 +658,65 @@ pub fn validate_component_document(document: &ComponentDocument) -> Result<(), S
                         ));
                     }
                     validate_type(&parameter.type_ir, &declarations, &none, false, true)?;
+                    if type_contains_readable_byte_stream(&parameter.type_ir) {
+                        if !matches!(parameter.type_ir, Type::ReadableByteStream) {
+                            return Err(format!(
+                                "{}.signature.parameters[{}]: ReadableByteStream must be a direct parameter",
+                                definition.id, parameter.position
+                            ));
+                        }
+                        if document.version < 4
+                            || definition.direction != ComponentDirection::Export
+                            || definition.invocation != Some(crate::ComponentInvocation::Async)
+                        {
+                            return Err(format!(
+                                "{}.signature.parameters[{}]: ReadableByteStream requires a Component Interface IR v4 async export",
+                                definition.id, parameter.position
+                            ));
+                        }
+                    }
                 }
                 validate_type(&signature.result, &declarations, &none, false, true)?;
+                if type_contains_readable_byte_stream(&signature.result) {
+                    return Err(format!(
+                        "{}.signature.result: ReadableByteStream cannot escape the scoped consumer",
+                        definition.id
+                    ));
+                }
             }
             (DefinitionStatus::Unsupported, Some(_)) | (DefinitionStatus::Unsupported, None) => {}
         }
     }
     Ok(())
+}
+
+fn type_contains_readable_byte_stream(type_ir: &Type) -> bool {
+    match type_ir {
+        Type::ReadableByteStream => true,
+        Type::List { item } | Type::Option { item } => type_contains_readable_byte_stream(item),
+        Type::Result { ok, error } => {
+            type_contains_readable_byte_stream(ok) || type_contains_readable_byte_stream(error)
+        }
+        Type::Struct { arguments, .. } | Type::Enum { arguments, .. } => {
+            arguments.iter().any(type_contains_readable_byte_stream)
+        }
+        Type::Unit
+        | Type::Bool
+        | Type::Number
+        | Type::Int8
+        | Type::Uint8
+        | Type::Int16
+        | Type::Uint16
+        | Type::Int32
+        | Type::Uint32
+        | Type::Int64
+        | Type::Uint64
+        | Type::Float32
+        | Type::Float64
+        | Type::String
+        | Type::Buffer
+        | Type::TypeParameter { .. } => false,
+    }
 }
 
 fn validate_type(
@@ -670,7 +727,12 @@ fn validate_type(
     allow_numeric_refinements: bool,
 ) -> Result<(), String> {
     match type_ir {
-        Type::Unit | Type::Bool | Type::Number | Type::String | Type::Buffer => Ok(()),
+        Type::Unit
+        | Type::Bool
+        | Type::Number
+        | Type::String
+        | Type::Buffer
+        | Type::ReadableByteStream => Ok(()),
         Type::Int8
         | Type::Uint8
         | Type::Int16

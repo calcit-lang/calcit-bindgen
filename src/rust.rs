@@ -473,6 +473,9 @@ fn render_type(type_ir: &Type, names: &RustNames) -> Result<String, String> {
         Type::Float64 => Ok("f64".to_owned()),
         Type::String => Ok("String".to_owned()),
         Type::Buffer => Ok("CalcitBuffer".to_owned()),
+        Type::ReadableByteStream => {
+            Err("ReadableByteStream is only supported by the Component WIT backend".to_owned())
+        }
         Type::List { item } => Ok(format!("Vec<{}>", render_type(item, names)?)),
         Type::Option { item } => Ok(format!("Option<{}>", render_type(item, names)?)),
         Type::Result { ok, error } => Ok(format!(

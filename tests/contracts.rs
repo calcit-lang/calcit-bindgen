@@ -226,7 +226,7 @@ fn rejects_old_component_contract_versions() {
     assert!(
         validate_component_document(&document)
             .unwrap_err()
-            .contains("supports v2 and v3")
+            .contains("supports v2, v3, and v4")
     );
 }
 

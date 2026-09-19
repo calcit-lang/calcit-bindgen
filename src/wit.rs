@@ -259,6 +259,7 @@ fn render_component_type(
     match type_ir {
         Type::Bool => Ok("bool".to_owned()),
         Type::Buffer => Ok("list<u8>".to_owned()),
+        Type::ReadableByteStream => Ok("stream<u8>".to_owned()),
         Type::List { item } => Ok(format!(
             "list<{}>",
             render_component_type(item, names, &format!("{path}.item"))?
@@ -625,6 +626,9 @@ fn render_type(type_ir: &Type, names: &WitNames, path: &str) -> Result<Option<St
         Type::Float64 => Ok(Some("f64".to_owned())),
         Type::String => Ok(Some("string".to_owned())),
         Type::Buffer => Ok(Some("list<u8>".to_owned())),
+        Type::ReadableByteStream => Err(format!(
+            "{path}: ReadableByteStream is only supported by Component Interface IR v4"
+        )),
         Type::List { item } => Ok(Some(format!(
             "list<{}>",
             render_type(item, names, &format!("{path}.item"))?
@@ -756,6 +760,67 @@ mod tests {
         resolve
             .push_str("component-async.wit", &wit)
             .expect("generated WASI 0.3 async WIT should parse");
+    }
+
+    #[test]
+    fn component_v4_renders_scoped_readable_byte_stream() {
+        let document = ComponentDocument {
+            version: 4,
+            package: "demo".to_owned(),
+            package_version: "0.0.0".to_owned(),
+            declarations: vec![],
+            definitions: vec![ComponentDefinition {
+                id: "app.main/consume".to_owned(),
+                namespace: "app.main".to_owned(),
+                name: "consume".to_owned(),
+                doc: String::new(),
+                logical_schema: String::new(),
+                direction: ComponentDirection::Export,
+                invocation: Some(ComponentInvocation::Async),
+                module: None,
+                symbol: "consume".to_owned(),
+                signature: Some(FunctionSignature {
+                    parameters: vec![Parameter {
+                        position: 0,
+                        type_ir: Type::ReadableByteStream,
+                    }],
+                    result: Type::Unit,
+                }),
+                status: DefinitionStatus::Supported,
+                diagnostic_codes: vec![],
+            }],
+        };
+
+        crate::validate_component_document(&document).expect("valid scoped stream contract");
+        let wit = render_component(&document).expect("render scoped stream WIT");
+        assert!(
+            wit.contains("export consume: async func(arg0: stream<u8>);"),
+            "{wit}"
+        );
+        let mut resolve = wit_parser::Resolve::default();
+        resolve
+            .push_str("component-stream.wit", &wit)
+            .expect("generated stream WIT should parse");
+
+        let mut sync = document.clone();
+        sync.definitions[0].invocation = Some(ComponentInvocation::Sync);
+        assert!(
+            crate::validate_component_document(&sync)
+                .unwrap_err()
+                .contains("requires a Component Interface IR v4 async export")
+        );
+
+        let mut escaping = document;
+        escaping.definitions[0]
+            .signature
+            .as_mut()
+            .expect("stream signature")
+            .result = Type::ReadableByteStream;
+        assert!(
+            crate::validate_component_document(&escaping)
+                .unwrap_err()
+                .contains("cannot escape the scoped consumer")
+        );
     }
 
     #[test]
