@@ -564,12 +564,27 @@ pub fn validate_component_document(document: &ComponentDocument) -> Result<(), S
             Declaration::Struct { fields, .. } => {
                 for field in fields {
                     validate_type(&field.type_ir, &declarations, &parameters, true, true)?;
+                    if type_contains_readable_byte_stream(&field.type_ir) {
+                        return Err(format!(
+                            "{}.fields.{}: ReadableByteStream cannot appear in a Component declaration",
+                            declaration.id(),
+                            field.name
+                        ));
+                    }
                 }
             }
             Declaration::Enum { variants, .. } => {
                 for variant in variants {
-                    for item in &variant.payload {
+                    for (index, item) in variant.payload.iter().enumerate() {
                         validate_type(item, &declarations, &parameters, true, true)?;
+                        if type_contains_readable_byte_stream(item) {
+                            return Err(format!(
+                                "{}.variants.{}.payload[{}]: ReadableByteStream cannot appear in a Component declaration",
+                                declaration.id(),
+                                variant.name,
+                                index
+                            ));
+                        }
                     }
                 }
             }
