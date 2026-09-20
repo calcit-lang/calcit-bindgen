@@ -8,8 +8,9 @@ use std::thread::{self, Thread};
 
 use calcit_bindgen::{
     COMPONENT_FILE, ComponentDefinition, ComponentDirection, ComponentDocument,
-    ComponentInvocation, DefinitionStatus, FunctionSignature, InterfaceContract, Parameter, Type,
-    WIT_BINDINGS_FILE, generate_contract_directory,
+    ComponentInvocation, DefinitionStatus, FunctionSignature, InterfaceContract, MANIFEST_FILE,
+    Parameter, Type, WIT_BINDINGS_FILE, check_contract_directory, generate_contract_directory,
+    load_contract,
 };
 use tempfile::TempDir;
 use wasmtime::component::{Component, Linker, StreamReader};
@@ -112,8 +113,11 @@ fn contract() -> InterfaceContract {
 }
 
 fn core_module() -> Vec<u8> {
-    wat::parse_str(
-        r#"
+    wat::parse_str(core_module_wat()).expect("compile async Canonical ABI core fixture")
+}
+
+fn core_module_wat() -> &'static str {
+    r#"
         (module
           (import "host" "[async-lower]double"
             (func $double (param f64 i32) (result i32)))
@@ -217,9 +221,24 @@ fn core_module() -> Vec<u8> {
             i32.const 0
             f64.load
             call $return-call-host-double))
-        "#,
+        "#
+}
+
+fn core_module_with_broken_task_return_signature() -> Vec<u8> {
+    wat::parse_str(
+        core_module_wat()
+            .replace(
+                "(func $return-fetch (param f64))",
+                "(func $return-fetch (param i32))",
+            )
+            .replace("f64.const 42", "i32.const 42"),
     )
-    .expect("compile async Canonical ABI core fixture")
+    .expect("compile mismatched async Canonical ABI core fixture")
+}
+
+fn core_module_with_missing_task_return_symbol() -> Vec<u8> {
+    wat::parse_str(core_module_wat().replace("[task-return]fetch", "[task-return]fetch-missing"))
+        .expect("compile async Canonical ABI core fixture with a missing lifecycle symbol")
 }
 
 fn readable_byte_stream_contract() -> InterfaceContract {
@@ -287,8 +306,25 @@ fn packages_and_executes_async_export_and_import_with_wasmtime() {
     let core = temporary.path().join("program.wasm");
     fs::write(&core, core_module()).expect("write core module");
     let output = temporary.path().join("generated");
-    generate_contract_directory(&contract(), Some(&core), &output, &[])
+    let manifest = generate_contract_directory(&contract(), Some(&core), &output, &[])
         .expect("package async Component");
+    let lifecycle = manifest
+        .lifecycle_surface
+        .expect("async Component manifest should record the core lifecycle surface");
+    assert!(lifecycle.imports.iter().any(|import| {
+        import.module == "host"
+            && import.name == "[async-lower]double"
+            && import.signature == "(func (param f64 i32) (result i32))"
+    }));
+    assert!(
+        lifecycle.imports.iter().any(|import| {
+            import.module == "[export]$root" && import.name == "[task-return]fetch"
+        })
+    );
+    assert!(lifecycle.exports.iter().any(|export| {
+        export.name == "[async-lift-stackful]call-host-double"
+            && export.signature == "(func (param f64))"
+    }));
 
     let mut config = Config::new();
     config.wasm_component_model_async(true);
@@ -372,13 +408,59 @@ fn packages_and_executes_async_export_and_import_with_wasmtime() {
 }
 
 #[test]
+fn lifecycle_symbol_or_signature_drift_fails_before_replacing_managed_output() {
+    let temporary = TempDir::new().expect("temporary workspace");
+    let core = temporary.path().join("program.wasm");
+    fs::write(&core, core_module()).expect("write valid core module");
+    let output = temporary.path().join("generated");
+    generate_contract_directory(&contract(), Some(&core), &output, &[])
+        .expect("package valid async Component");
+    let manifest_before = fs::read(output.join(MANIFEST_FILE)).expect("read valid manifest");
+
+    for (kind, broken_core) in [
+        ("signature", core_module_with_broken_task_return_signature()),
+        ("symbol", core_module_with_missing_task_return_symbol()),
+    ] {
+        fs::write(&core, broken_core).unwrap_or_else(|error| {
+            panic!("write core module with lifecycle {kind} drift: {error}")
+        });
+        let generate_error = generate_contract_directory(&contract(), Some(&core), &output, &[])
+            .err()
+            .unwrap_or_else(|| panic!("generation must reject lifecycle {kind} drift"));
+        assert!(
+            generate_error.contains("Canonical ABI"),
+            "unexpected generation error for {kind} drift: {generate_error}"
+        );
+        let check_error = check_contract_directory(&contract(), Some(&core), &output, &[])
+            .err()
+            .unwrap_or_else(|| panic!("check must reject lifecycle {kind} drift"));
+        assert!(
+            check_error.contains("Canonical ABI"),
+            "unexpected check error for {kind} drift: {check_error}"
+        );
+        assert_eq!(
+            fs::read(output.join(MANIFEST_FILE)).expect("read preserved manifest"),
+            manifest_before,
+            "failed generation or check replaced the managed output after {kind} drift"
+        );
+    }
+}
+
+#[test]
 fn packages_readable_byte_stream_with_canonical_abi_builtins() {
     let temporary = TempDir::new().expect("temporary workspace");
     let core = temporary.path().join("program.wasm");
     fs::write(&core, readable_byte_stream_core_module()).expect("write core module");
     let output = temporary.path().join("generated");
-    generate_contract_directory(&readable_byte_stream_contract(), Some(&core), &output, &[])
-        .expect("package readable byte-stream Component");
+    let manifest =
+        generate_contract_directory(&readable_byte_stream_contract(), Some(&core), &output, &[])
+            .expect("package readable byte-stream Component");
+    let lifecycle = manifest
+        .lifecycle_surface
+        .expect("stream Component manifest should record the core lifecycle surface");
+    assert!(lifecycle.imports.iter().any(|import| {
+        import.module == "[export]$root" && import.name == "[stream-drop-readable-0]consume"
+    }));
 
     let wit = fs::read_to_string(output.join(WIT_BINDINGS_FILE)).expect("read generated WIT");
     assert!(wit.contains("export consume: async func(arg0: stream<u8>);"));
@@ -410,4 +492,76 @@ fn packages_readable_byte_stream_with_canonical_abi_builtins() {
             .expect("consume readable byte stream");
     });
     store.assert_concurrent_state_empty();
+}
+
+#[test]
+#[ignore = "requires the Calcit 0.18.0 lifecycle fixtures"]
+fn packages_real_calcit_stackless_lifecycle_surface() {
+    let fixtures = [
+        (
+            "CALCIT_BINDGEN_ASYNC_EXPORT_CONTRACT",
+            "CALCIT_BINDGEN_ASYNC_EXPORT_CORE",
+            &["[async-lift-stackful]load-text", "cabi_post_load-wide-sync"][..],
+            &["[task-return]load-text"][..],
+        ),
+        (
+            "CALCIT_BINDGEN_ASYNC_IMPORT_CONTRACT",
+            "CALCIT_BINDGEN_ASYNC_IMPORT_CORE",
+            &[
+                "[async-lift]call-host-load",
+                "[callback][async-lift]call-host-load",
+            ][..],
+            &["[async-lower][subtask-cancel]", "[task-cancel]"][..],
+        ),
+        (
+            "CALCIT_BINDGEN_STREAM_CONTRACT",
+            "CALCIT_BINDGEN_STREAM_CORE",
+            &["[async-lift]consume", "[callback][async-lift]consume"][..],
+            &[
+                "[async-lower][stream-cancel-read-0]consume",
+                "[stream-drop-readable-0]consume",
+            ][..],
+        ),
+    ];
+
+    let mut config = Config::new();
+    config.wasm_component_model_async(true);
+    config.wasm_component_model_async_stackful(true);
+    config.wasm_component_model_more_async_builtins(true);
+    let engine = Engine::new(&config).expect("create real lifecycle Component engine");
+
+    for (contract_variable, core_variable, expected_exports, expected_imports) in fixtures {
+        let contract_path = std::env::var(contract_variable)
+            .unwrap_or_else(|_| panic!("{contract_variable} must name a generated contract"));
+        let core_path = std::env::var(core_variable)
+            .unwrap_or_else(|_| panic!("{core_variable} must name a generated core module"));
+        let contract = load_contract(contract_path).expect("load real lifecycle contract");
+        let temporary = TempDir::new().expect("temporary lifecycle package directory");
+        let output = temporary.path().join("generated");
+        let manifest = generate_contract_directory(
+            &contract,
+            Some(std::path::Path::new(&core_path)),
+            &output,
+            &[],
+        )
+        .expect("package real Calcit lifecycle core");
+        let lifecycle = manifest
+            .lifecycle_surface
+            .expect("real lifecycle package should record its core surface");
+
+        for name in expected_exports {
+            assert!(
+                lifecycle.exports.iter().any(|export| export.name == *name),
+                "missing lifecycle export {name:?} in {core_variable}: {lifecycle:?}"
+            );
+        }
+        for name in expected_imports {
+            assert!(
+                lifecycle.imports.iter().any(|import| import.name == *name),
+                "missing lifecycle import {name:?} in {core_variable}: {lifecycle:?}"
+            );
+        }
+        Component::from_file(&engine, output.join(COMPONENT_FILE))
+            .expect("Wasmtime should accept the packaged real lifecycle Component");
+    }
 }

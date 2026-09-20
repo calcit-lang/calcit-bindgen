@@ -31,12 +31,12 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
-      - name: Check out the matching Calcit numeric adapters
+      - name: Check out the matching Calcit release
         if: matrix.os == 'ubuntu-latest'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: calcit-lang/calcit
-          ref: c5c5dbf0acd44e1295ca005f7e7dbcb134cfa123
+          ref: 0.18.0
           path: calcit-core
           persist-credentials: false
       - name: Generate and run a real Calcit numeric Component
@@ -55,6 +55,26 @@ jobs:
           npx --yes @bytecodealliance/jco@1.16.1 transpile "$RUNNER_TEMP/calcit-component.wasm" --out-dir "$RUNNER_TEMP/jco" --name component --instantiation async --no-typescript
           echo '{"type":"module"}' > "$RUNNER_TEMP/jco/package.json"
           node tests/jco-smoke.mjs "$RUNNER_TEMP/jco/component.js"
+      - name: Verify Calcit core lifecycle semantics
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo test --manifest-path calcit-core/Cargo.toml --test component_wasm_cli async_component_import_waits_for_subtask_and_drops_lifecycle_handles -- --exact
+          cargo test --manifest-path calcit-core/Cargo.toml --test component_wasm_cli scoped_stream_export_bounds_reads_and_closes_every_terminal_path -- --exact
+          cargo test --manifest-path calcit-core/Cargo.toml --test component_wasm_cli packaged_component_invokes_sync_post_return_in_wasmtime -- --exact
+      - name: Package the real Calcit lifecycle surface
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          for fixture in component-wasm-async-export component-wasm-async-import component-wasm-stream; do
+            calcit-core/target/debug/calcit "calcit-core/tests/fixtures/$fixture.cirru" ffi export --boundary component > "$RUNNER_TEMP/$fixture-interface.cirru"
+            calcit-core/target/debug/calcit "calcit-core/tests/fixtures/$fixture.cirru" wasm --boundary component --emit-path "$RUNNER_TEMP/$fixture-core"
+          done
+          CALCIT_BINDGEN_ASYNC_EXPORT_CONTRACT="$RUNNER_TEMP/component-wasm-async-export-interface.cirru" \
+            CALCIT_BINDGEN_ASYNC_EXPORT_CORE="$RUNNER_TEMP/component-wasm-async-export-core/program.wasm" \
+            CALCIT_BINDGEN_ASYNC_IMPORT_CONTRACT="$RUNNER_TEMP/component-wasm-async-import-interface.cirru" \
+            CALCIT_BINDGEN_ASYNC_IMPORT_CORE="$RUNNER_TEMP/component-wasm-async-import-core/program.wasm" \
+            CALCIT_BINDGEN_STREAM_CONTRACT="$RUNNER_TEMP/component-wasm-stream-interface.cirru" \
+            CALCIT_BINDGEN_STREAM_CORE="$RUNNER_TEMP/component-wasm-stream-core/program.wasm" \
+            cargo test --test async_component packages_real_calcit_stackless_lifecycle_surface -- --ignored --exact
       - run: cargo package
 
   docs:
