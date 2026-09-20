@@ -23,7 +23,7 @@ pub const WASMTIME_HTTP_HOST_README_FILE: &str = "rust/wasmtime-http-host/README
 pub const WASMTIME_HTTP_HOST_CONFIG_EXAMPLE_FILE: &str =
     "rust/wasmtime-http-host/capabilities.example.cirru";
 pub const MANIFEST_FILE: &str = "calcit-bindgen.manifest.json";
-const MANIFEST_SCHEMA_VERSION: u32 = 3;
+const MANIFEST_SCHEMA_VERSION: u32 = 4;
 const GENERATOR_NAME: &str = "calcit-bindgen";
 const DIGEST_ALGORITHM: &str = "fnv1a-128";
 
@@ -49,6 +49,8 @@ pub struct Manifest {
     pub contract_kind: ContractKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub core_module_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_surface: Option<crate::component::LifecycleSurface>,
     #[serde(default = "legacy_manifest_backends")]
     pub backends: Vec<GenerationBackend>,
     pub files: Vec<ArtifactDigest>,
@@ -455,6 +457,7 @@ fn render_component(
         contract_digest,
         contract_kind: ContractKind::Component,
         core_module_digest: Some(core_module_digest),
+        lifecycle_surface: Some(packaged.lifecycle_surface),
         backends: backends.into_iter().collect(),
         files: files
             .iter()
@@ -525,6 +528,7 @@ fn render(document: &Document, backends: &[GenerationBackend]) -> Result<Rendere
         contract_digest,
         contract_kind: ContractKind::Native,
         core_module_digest: None,
+        lifecycle_surface: None,
         backends: backends.into_iter().collect(),
         files: files
             .iter()

@@ -81,9 +81,10 @@ adapter 默认拒绝全部网络 origin，调用方必须逐个授予 `scheme://
 Component v3 的 `invocation` 会被显式校验；`sync` 生成普通 `func`，`async` 生成 WASI 0.3 原生
 `async func`。打包仍要求 core module 实现对应的 Canonical ABI，缺少 async builtin wiring 时会在写入产物前失败。
 仓库内 Wasmtime 47 验收会实际调用 async export、typed Result success/error，并让 concurrent async host import
-至少挂起一次后通过 waitable 生命周期恢复。主动取消与完整 post-return ownership 仍属于 0.16.0 后续验收，
-不因当前执行 smoke 通过而视为完成。
-manifest 同时记录 contract digest、core module digest 和全部 managed artifacts。
+至少挂起一次后通过 waitable 生命周期恢复。CI 还固定使用 Calcit 0.18.0 生成的真实 core，分别验证主动取消与
+callback 竞态、exactly-once completion、同步 post-return 内存复用，以及 stream backpressure、cancel-read 和 drop。
+Calcit core 负责生成并测试这些 wiring；bindgen 只消费公开 contract、验证打包结果，不复制 lowering。
+manifest 同时记录 contract digest、core module digest、core lifecycle import/export 及其函数签名，以及全部 managed artifacts。
 输入 core module 的 import/export、memory、`cabi_realloc` 或 Canonical ABI 签名不匹配时，
 命令会在创建或替换输出目录前失败。`check` 会重新编码并保持只读，因此也能发现 core module
 变化造成的 stale artifact。
@@ -136,12 +137,13 @@ WIT 将 Calcit Buffer 严格映射为 `list<u8>`，将 Calcit Number 映射为�
 | Enum | codecs | qualified schema references | qualified generated names | closed monomorphic variants |
 | Generic declarations | yes | applied callable references | yes | unsupported |
 | `native + sync + edn-buffer-v1` | yes | yes | declaration view | interface view |
-| async WIT / async Canonical ABI lifecycle | unsupported | unsupported | unsupported | declarations and caller-wired packaging/execution yes; wiring generation/lifecycle ownership unsupported |
+| async WIT / async Canonical ABI lifecycle | unsupported | unsupported | unsupported | declaration、真实 core 打包/执行、lifecycle surface 校验与 manifest 记录；不生成 wiring |
 
 非目标包括猜测 Dynamic、把 resource 伪装成 Struct、生成双向 Component bindings，以及在本仓库
 重新定义 Calcit Interface IR 或 native ABI。当前 async 支持包括 WIT declaration 渲染，以及打包并执行
-调用方提供的、已实现 async Canonical ABI wiring 的 core module。本工具仍不生成该 wiring，也不保证缺少
-该 wiring 的 core module 可运行；主动取消、callback 与 resource lifecycle 仍是明确的非目标。
+调用方提供的、已实现 async Canonical ABI wiring 的 core module。本工具不生成该 wiring，也不保证缺少
+该 wiring 的 core module 可运行；但会在写入前验证完整 Canonical ABI，并把 callback、取消、post-return、
+stream/resource drop 等 lifecycle surface 及函数签名写入 ownership manifest，供 `check` 检测漂移。
 
 消费 crate 需要依赖 `calcit_native_ffi = "0.1.3"` 和 `cirru_edn = "0.8.2"`，在 crate
 根部 `include!` 生成文件，实现其中的 package service trait，然后调用生成的
@@ -222,9 +224,12 @@ declarations. Packaging still requires the core module to implement the matching
 Canonical ABI and fails before writing artifacts when async builtin wiring is missing.
 The in-repository Wasmtime 47 acceptance invokes an async export, typed Result
 success/error, and a concurrent async host import that suspends at least once
-before resuming through the waitable lifecycle. Active cancellation and complete
-post-return ownership remain later 0.16.0 acceptance work and are not claimed by
-this execution smoke.
+before resuming through the waitable lifecycle. CI also packages real core
+modules produced by Calcit 0.18.0 and verifies active cancellation and callback
+races, exactly-once completion, synchronous post-return reuse, and stream
+backpressure, cancel-read, and drop. Calcit core owns that lowering; bindgen
+validates and packages its public contract without duplicating it. The manifest
+records lifecycle imports/exports and their function signatures.
 
 When the contract contains the exact closed `calcit:wasi-http/client.request`
 interface, generation also owns `rust/wasmtime_http_adapter.rs` and a runnable
@@ -263,10 +268,11 @@ String, and Buffer items without a Dynamic fallback.
 The capability matrix above is normative for the current MVP. Async WIT
 declaration rendering plus packaging and execution of caller-supplied core
 modules with complete async Canonical ABI wiring are supported. This tool does
-not generate that wiring or make core modules runnable when it is absent.
-Active cancellation, callback and resource lifecycle, Dynamic guessing,
-bidirectional Component bindings, and ownership of the Interface IR or native
-ABI remain explicit non-goals.
+not generate that wiring or make core modules runnable when it is absent. It
+does validate and record callback, cancellation, post-return, and stream/resource
+drop surfaces supplied by the core module. Generating that lifecycle wiring,
+Dynamic guessing, bidirectional Component bindings, and ownership of the
+Interface IR or native ABI remain explicit non-goals.
 
 Consumer crates depend on `calcit_native_ffi = "0.1.3"` and
 `cirru_edn = "0.8.2"`, `include!` the generated file at crate root, implement

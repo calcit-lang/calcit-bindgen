@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
 
+use serde::{Deserialize, Serialize};
 use wasm_encoder::reencode::{Error as ReencodeError, Reencode};
 use wasm_encoder::{ImportSection, Module};
-use wasmparser::{Encoding, Parser, Payload, Validator};
+use wasmparser::{Encoding, ExternalKind, FuncType, Parser, Payload, TypeRef, Validator};
 use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
 use wit_parser::Resolve;
 
@@ -12,6 +13,29 @@ use crate::ComponentDocument;
 pub(crate) struct ComponentArtifacts {
     pub wit: String,
     pub component: Vec<u8>,
+    pub lifecycle_surface: LifecycleSurface,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleSurface {
+    pub imports: Vec<LifecycleImport>,
+    pub exports: Vec<LifecycleExport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleImport {
+    pub module: String,
+    pub name: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleExport {
+    pub name: String,
+    pub signature: String,
 }
 
 pub(crate) fn package(
@@ -19,6 +43,7 @@ pub(crate) fn package(
     core_module: &[u8],
 ) -> Result<ComponentArtifacts, String> {
     validate_core_module(core_module)?;
+    let lifecycle_surface = inspect_lifecycle_surface(core_module)?;
     let wit = crate::wit::render_component(document)?;
     let import_aliases = crate::wit::component_import_aliases(document)?;
     let mut resolve = Resolve::default();
@@ -52,7 +77,102 @@ pub(crate) fn package(
     let component = encoder.encode().map_err(|error| {
         format!("core module does not implement the Component contract's Canonical ABI: {error:#}")
     })?;
-    Ok(ComponentArtifacts { wit, component })
+    Ok(ComponentArtifacts {
+        wit,
+        component,
+        lifecycle_surface,
+    })
+}
+
+fn inspect_lifecycle_surface(bytes: &[u8]) -> Result<LifecycleSurface, String> {
+    let mut types = Vec::<FuncType>::new();
+    let mut function_types = Vec::<u32>::new();
+    let mut imports = Vec::<LifecycleImport>::new();
+    let mut pending_exports = Vec::<(String, u32)>::new();
+
+    for payload in Parser::new(0).parse_all(bytes) {
+        match payload.map_err(|error| format!("invalid core WebAssembly module: {error}"))? {
+            Payload::TypeSection(reader) => {
+                types = reader
+                    .into_iter_err_on_gc_types()
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| format!("invalid core WebAssembly function type: {error}"))?;
+            }
+            Payload::ImportSection(reader) => {
+                for import in reader.into_imports() {
+                    let import = import
+                        .map_err(|error| format!("invalid core WebAssembly import: {error}"))?;
+                    let type_index = match import.ty {
+                        TypeRef::Func(index) | TypeRef::FuncExact(index) => index,
+                        _ => continue,
+                    };
+                    function_types.push(type_index);
+                    if is_lifecycle_import(import.module, import.name) {
+                        imports.push(LifecycleImport {
+                            module: import.module.to_owned(),
+                            name: import.name.to_owned(),
+                            signature: function_signature(&types, type_index)?,
+                        });
+                    }
+                }
+            }
+            Payload::FunctionSection(reader) => {
+                for type_index in reader {
+                    function_types.push(type_index.map_err(|error| {
+                        format!("invalid core WebAssembly function declaration: {error}")
+                    })?);
+                }
+            }
+            Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export
+                        .map_err(|error| format!("invalid core WebAssembly export: {error}"))?;
+                    if export.kind == ExternalKind::Func && is_lifecycle_export(export.name) {
+                        pending_exports.push((export.name.to_owned(), export.index));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut exports = pending_exports
+        .into_iter()
+        .map(|(name, function_index)| {
+            let type_index = *function_types
+                .get(function_index as usize)
+                .ok_or_else(|| format!("lifecycle export {name:?} has no function type"))?;
+            Ok(LifecycleExport {
+                name,
+                signature: function_signature(&types, type_index)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    imports.sort();
+    exports.sort();
+    Ok(LifecycleSurface { imports, exports })
+}
+
+fn function_signature(types: &[FuncType], type_index: u32) -> Result<String, String> {
+    types
+        .get(type_index as usize)
+        .map(ToString::to_string)
+        .ok_or_else(|| format!("function references missing type index {type_index}"))
+}
+
+fn is_lifecycle_import(module: &str, name: &str) -> bool {
+    module == "$root"
+        || module == "[export]$root"
+        || name.contains("[async-lower]")
+        || name.contains("[task-return]")
+        || name.contains("[task-cancel]")
+        || name.contains("[stream-")
+}
+
+fn is_lifecycle_export(name: &str) -> bool {
+    name.starts_with("[async-lift")
+        || name.starts_with("[callback][async-lift")
+        || name.starts_with("cabi_post_")
 }
 
 struct ImportModuleReencoder<'a> {
