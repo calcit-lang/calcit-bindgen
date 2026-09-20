@@ -444,6 +444,9 @@ fn decode_option(value: &Edn, ty: &Type, path: &str) -> Result<Val, String> {
     let Edn::Enum(value) = value else {
         return Err(format!("{path} must be :: :none or :: :some value"));
     };
+    if value.type_name.is_some() {
+        return Err(format!("{path} must use an unqualified :: case"));
+    }
     match (value.variant.as_ref(), value.extra.as_slice()) {
         ("none", []) => Ok(Val::Option(None)),
         ("some", [payload]) => decode_value(payload, ty, &format!("{path}.some"))
@@ -460,6 +463,9 @@ fn decode_result(
     let Edn::Enum(value) = value else {
         return Err(format!("{path} must be a :: :ok or :: :err value"));
     };
+    if value.type_name.is_some() {
+        return Err(format!("{path} must use an unqualified :: case"));
+    }
     let decoded = match value.variant.as_ref() {
         "ok" => Ok(decode_optional_payload(
             &value.extra,
