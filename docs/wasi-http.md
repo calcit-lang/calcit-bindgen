@@ -5,13 +5,43 @@ Calcit 的 HTTP 边界是一个闭合、完整缓冲的 async Component import�
 和 typed error，不暴露 `wasi:http` 的 resource、stream、pollable、socket 或 TLS 对象。
 
 `calcit-bindgen generate` 发现精确匹配的 contract 后，会在现有 managed output 中额外生成
-`rust/wasmtime_http_adapter.rs`。`check` 会用相同规则守门该文件；接口缺字段、类型变化、改成
-sync 或出现重复 import 都会直接失败，避免宿主与 Calcit 静默漂移。这里没有增加新的命令。
+`rust/wasmtime_http_adapter.rs` 与可运行的 `rust/wasmtime-http-host/` crate。`check` 会用相同
+manifest 规则守门这些文件；接口缺字段、类型变化、改成 sync、出现重复 import，或者生成文件
+过期都会直接失败，避免宿主与 Calcit 静默漂移。这里没有增加新的命令。
 Component packaging 会保留 `calcit:wasi-http/client` 这一 package-qualified import identity；
 生成阶段使用内部合法 WIT alias 包装 core module，最终 Component 对宿主暴露的仍是原始名称，
 不会要求业务代码改成私有缩写。
 
-## 宿主依赖
+## 直接运行生成的宿主
+
+复制生成的 capability 示例到 managed output 之外，再显式填写权限：
+
+```cirru
+{}
+  :component |/absolute/path/to/component.wasm
+  :entry |run
+  :max-response-bytes 1048576
+  :allowed-origins $ []
+    |https://api.example.com
+  :preopens $ []
+    {}
+      :host |/absolute/path/to/data
+      :guest |/data
+      :access :read
+```
+
+然后运行同一个 `generate` 产物中的 host crate：
+
+```bash
+cargo run --manifest-path generated-component/rust/wasmtime-http-host/Cargo.toml \
+  -- /path/to/capabilities.cirru
+```
+
+生成目录完全由 `generate` 管理；capability 文件和业务封装归用户维护。`allowed-origins` 与
+`preopens` 缺省时都为空，未知字段会被拒绝；文件只接受明确的 `:read` / `:read-write` preopen。
+宿主只调用零参数、返回 Unit 的 export，以保持入口可审计，不引入动态参数 codec。
+
+## 自定义宿主依赖
 
 宿主 crate 使用与生成器一致的 Wasmtime 47，并显式启用 HTTP adapter：
 
@@ -36,7 +66,8 @@ mod calcit_wasi_http {
 }
 
 let http = calcit_wasi_http::WasiHttpConfig::default()
-    .allow_origin("https://api.example.com")?;
+    .allow_origin("https://api.example.com")?
+    .max_response_bytes(1_048_576);
 calcit_wasi_http::add_to_linker(&mut linker, http)?;
 ```
 
@@ -48,7 +79,7 @@ calcit_wasi_http::add_to_linker(&mut linker, http)?;
 ## 有界行为
 
 - request body 的 empty、UTF-8 text 与任意 bytes 都会保持原始语义；
-- response 在读取过程中累计字节数，首次超过 `max-response-bytes` 就返回
+- response 在读取过程中累计字节数，首次超过 `max-response-bytes` 或宿主上限就返回
   `response-too-large(observed-bytes)` 并释放连接；
 - `text/*`、`application/json` 与 `*+json` 响应在 UTF-8 有效时返回 text，否则返回 bytes；
 - header 值保持 bytes；非法或标准禁止的 request header 返回 `invalid-request`；

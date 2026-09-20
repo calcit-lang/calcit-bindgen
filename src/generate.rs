@@ -17,6 +17,11 @@ pub const TYPESCRIPT_BINDINGS_FILE: &str = "typescript/bindings.d.ts";
 pub const WIT_BINDINGS_FILE: &str = "wit/interface.wit";
 pub const COMPONENT_FILE: &str = "component/component.wasm";
 pub const WASMTIME_HTTP_ADAPTER_FILE: &str = "rust/wasmtime_http_adapter.rs";
+pub const WASMTIME_HTTP_HOST_CARGO_FILE: &str = "rust/wasmtime-http-host/Cargo.toml";
+pub const WASMTIME_HTTP_HOST_MAIN_FILE: &str = "rust/wasmtime-http-host/src/main.rs";
+pub const WASMTIME_HTTP_HOST_README_FILE: &str = "rust/wasmtime-http-host/README.md";
+pub const WASMTIME_HTTP_HOST_CONFIG_EXAMPLE_FILE: &str =
+    "rust/wasmtime-http-host/capabilities.example.cirru";
 pub const MANIFEST_FILE: &str = "calcit-bindgen.manifest.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 3;
 const GENERATOR_NAME: &str = "calcit-bindgen";
@@ -435,6 +440,9 @@ fn render_component(
     ]);
     if let Some(adapter) = crate::http_adapter::render(&canonical)? {
         files.insert(WASMTIME_HTTP_ADAPTER_FILE.to_owned(), adapter.into_bytes());
+        for (path, content) in crate::host_scaffold::render() {
+            files.insert(path.to_owned(), content.into_bytes());
+        }
     }
     let manifest = Manifest {
         schema_version: MANIFEST_SCHEMA_VERSION,

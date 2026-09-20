@@ -73,9 +73,11 @@ calcit project/calcit.cirru ffi export --boundary component --format json \
 Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String、递归同质 `List<T>`、闭合单态 `Option<T>` / `Result<T,E>`、单态 Struct record、闭合单态 Enum variant 与 Unit 结果，并产生规范化
 `interface.json`、`wit/interface.wit`、`component/component.wasm` 与 ownership manifest。
 当 contract 包含精确的 `calcit:wasi-http/client.request` 闭合接口时，还会生成
-`rust/wasmtime_http_adapter.rs`；该文件复用 crate 的 `wasmtime-http` feature，不增加命令入口。
+`rust/wasmtime_http_adapter.rs` 以及可直接运行的 `rust/wasmtime-http-host/`；它们复用 crate 的
+`wasmtime-http` feature 和现有 `generate` / `check` / manifest，不增加命令入口。
 adapter 默认拒绝全部网络 origin，调用方必须逐个授予 `scheme://authority`，并由每次请求的
-`max-response-bytes` 约束完整缓冲。完整接入方式见 [WASI HTTP 文档](docs/wasi-http.md)。
+`max-response-bytes` 与宿主上限共同约束完整缓冲。宿主 capability 使用 Cirru EDN，网络与文件系统
+均默认拒绝；完整接入方式见 [WASI HTTP 文档](docs/wasi-http.md)。
 Component v3 的 `invocation` 会被显式校验；`sync` 生成普通 `func`，`async` 生成 WASI 0.3 原生
 `async func`。打包仍要求 core module 实现对应的 Canonical ABI，缺少 async builtin wiring 时会在写入产物前失败。
 仓库内 Wasmtime 47 验收会实际调用 async export、typed Result success/error，并让 concurrent async host import
@@ -225,9 +227,12 @@ post-return ownership remain later 0.16.0 acceptance work and are not claimed by
 this execution smoke.
 
 When the contract contains the exact closed `calcit:wasi-http/client.request`
-interface, generation also owns `rust/wasmtime_http_adapter.rs`. The adapter is
+interface, generation also owns `rust/wasmtime_http_adapter.rs` and a runnable
+`rust/wasmtime-http-host/` crate. Both stay under the existing `generate`,
+`check`, and manifest lifecycle, without another command. The adapter is
 backed by the stable WASI 0.2 HTTP transport in Wasmtime 47, denies all origins
-by default, and requires explicit per-request response limits. See the Chinese
+and preopened directories by default, and combines the host response limit with
+the explicit per-request limit. See the Chinese
 [WASI HTTP guide](docs/wasi-http.md) for integration details.
 
 The Rust backend accepts only `native + sync + edn-buffer-v1`. It emits
