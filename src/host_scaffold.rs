@@ -26,6 +26,9 @@ cargo run --manifest-path rust/wasmtime-http-host/Cargo.toml -- /path/to/capabil
 preopen 的 `:access` 只能是 `:read` 或 `:read-write`。`max-response-bytes` 是宿主上限，
 会与 Calcit 请求里的上限取较小值。`arguments` 会在调用前按 Component function type
 严格解码；结果以 Cirru EDN 写到 stdout，诊断只写 stderr。零参数 Unit 入口继续使用空列表。
+
+Cargo 运行产生的 `Cargo.lock` 与 `target/` 不属于生成 manifest；`check` 会忽略它们，下一次
+`generate` 会随整个受管目录一起重建。capability 配置与其他用户文件必须放在生成目录之外。
 "#;
 
 const CONFIG_EXAMPLE: &str = r#"{}

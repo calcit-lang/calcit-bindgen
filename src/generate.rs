@@ -22,6 +22,8 @@ pub const WASMTIME_HTTP_HOST_MAIN_FILE: &str = "rust/wasmtime-http-host/src/main
 pub const WASMTIME_HTTP_HOST_README_FILE: &str = "rust/wasmtime-http-host/README.md";
 pub const WASMTIME_HTTP_HOST_CONFIG_EXAMPLE_FILE: &str =
     "rust/wasmtime-http-host/capabilities.example.cirru";
+const WASMTIME_HTTP_HOST_LOCK_FILE: &str = "rust/wasmtime-http-host/Cargo.lock";
+const WASMTIME_HTTP_HOST_TARGET_DIRECTORY: &str = "rust/wasmtime-http-host/target/";
 pub const MANIFEST_FILE: &str = "calcit-bindgen.manifest.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 4;
 const GENERATOR_NAME: &str = "calcit-bindgen";
@@ -330,7 +332,7 @@ fn check_rendered(rendered: RenderedOutput, output: &Path) -> Result<CheckReport
 
     let expected = managed_entries(&rendered.manifest);
     for path in collect_artifacts(output)? {
-        if !expected.contains(&path) {
+        if !expected.contains(&path) && !is_generated_host_runtime_artifact(&expected, &path) {
             issues.push(issue(
                 CheckIssueKind::Unexpected,
                 path,
@@ -627,7 +629,9 @@ fn ensure_owned_directory(output: &Path) -> Result<(), String> {
     let managed = managed_entries(&manifest);
     let unexpected = collect_artifacts(output)?
         .into_iter()
-        .filter(|path| !managed.contains(path))
+        .filter(|path| {
+            !managed.contains(path) && !is_generated_host_runtime_artifact(&managed, path)
+        })
         .collect::<Vec<_>>();
     if !unexpected.is_empty() {
         return Err(format!(
@@ -700,6 +704,12 @@ fn managed_entries(manifest: &Manifest) -> BTreeSet<String> {
     managed
 }
 
+fn is_generated_host_runtime_artifact(managed: &BTreeSet<String>, path: &str) -> bool {
+    managed.contains(WASMTIME_HTTP_HOST_CARGO_FILE)
+        && (path == WASMTIME_HTTP_HOST_LOCK_FILE
+            || path.starts_with(WASMTIME_HTTP_HOST_TARGET_DIRECTORY))
+}
+
 fn output_parent(output: &Path) -> Result<&Path, String> {
     if output.file_name().is_none() {
         return Err(format!(
@@ -748,4 +758,64 @@ fn digest(bytes: &[u8]) -> String {
         hash = hash.wrapping_mul(PRIME);
     }
     format!("{hash:032x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rendered_host() -> RenderedOutput {
+        let cargo = b"[package]\nname = \"generated-host\"\n".to_vec();
+        let files = BTreeMap::from([(WASMTIME_HTTP_HOST_CARGO_FILE.to_owned(), cargo.clone())]);
+        let manifest = Manifest {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            generator: GENERATOR_NAME.to_owned(),
+            generator_version: env!("CARGO_PKG_VERSION").to_owned(),
+            interface_version: 4,
+            package: "demo:host".to_owned(),
+            package_version: "0.0.0".to_owned(),
+            digest_algorithm: DIGEST_ALGORITHM.to_owned(),
+            contract_digest: "test-contract".to_owned(),
+            contract_kind: ContractKind::Component,
+            core_module_digest: Some("test-core".to_owned()),
+            lifecycle_surface: None,
+            backends: vec![GenerationBackend::Wit],
+            files: vec![ArtifactDigest {
+                path: WASMTIME_HTTP_HOST_CARGO_FILE.to_owned(),
+                digest: digest(&cargo),
+            }],
+        };
+        RenderedOutput { manifest, files }
+    }
+
+    #[test]
+    fn generated_host_ignores_only_cargo_runtime_artifacts() {
+        let temporary = tempfile::tempdir().expect("temporary output parent");
+        let output = temporary.path().join("generated");
+        install_rendered(rendered_host(), &output).expect("install generated host");
+
+        let host = output.join("rust/wasmtime-http-host");
+        fs::write(host.join("Cargo.lock"), b"runtime lock\n").expect("write Cargo lock");
+        fs::create_dir_all(host.join("target/debug")).expect("create Cargo target directory");
+        fs::write(host.join("target/debug/host"), b"runtime binary")
+            .expect("write Cargo target artifact");
+
+        let report = check_rendered(rendered_host(), &output).expect("check generated host");
+        assert!(report.current, "Cargo runtime artifacts must be ignored");
+
+        fs::write(host.join("notes.txt"), b"user file\n").expect("write unknown user file");
+        let report = check_rendered(rendered_host(), &output).expect("check unknown file");
+        assert!(report.issues.iter().any(|issue| {
+            issue.kind == CheckIssueKind::Unexpected
+                && issue.path == "rust/wasmtime-http-host/notes.txt"
+        }));
+        let error = install_rendered(rendered_host(), &output)
+            .expect_err("unknown user file must still block replacement");
+        assert!(error.contains("rust/wasmtime-http-host/notes.txt"));
+
+        fs::remove_file(host.join("notes.txt")).expect("remove unknown user file");
+        install_rendered(rendered_host(), &output).expect("regenerate after Cargo run");
+        assert!(!host.join("Cargo.lock").exists());
+        assert!(!host.join("target").exists());
+    }
 }
