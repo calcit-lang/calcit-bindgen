@@ -1,6 +1,6 @@
 [package]
 name = "calcit-bindgen"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "Deterministic typed binding generator for Calcit FFI Interface IR"
 license = "MIT"
