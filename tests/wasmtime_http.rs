@@ -167,3 +167,16 @@ async fn rejects_responses_over_the_declared_limit() {
         .expect_err("reject oversized response");
     assert!(matches!(error, HttpError::ResponseTooLarge(9)));
 }
+
+#[tokio::test]
+async fn host_response_limit_caps_the_guest_request_limit() {
+    let origin = serve_once(b"123456789", "application/octet-stream").await;
+    let config = WasiHttpConfig::default()
+        .allow_origin(&origin)
+        .expect("allow local HTTP origin")
+        .max_response_bytes(4);
+    let error = send(&config, request(format!("{origin}/items"), 64))
+        .await
+        .expect_err("host response limit must cap the guest request limit");
+    assert!(matches!(error, HttpError::ResponseTooLarge(9)));
+}

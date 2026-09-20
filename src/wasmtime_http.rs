@@ -92,6 +92,7 @@ pub enum HttpError {
 pub struct WasiHttpConfig {
     allowed_origins: Arc<BTreeSet<String>>,
     unsupported_reason: Option<Arc<str>>,
+    max_response_bytes: u64,
     pub connect_timeout: Duration,
     pub first_byte_timeout: Duration,
     pub between_bytes_timeout: Duration,
@@ -102,6 +103,7 @@ impl Default for WasiHttpConfig {
         Self {
             allowed_origins: Arc::default(),
             unsupported_reason: None,
+            max_response_bytes: u64::MAX,
             connect_timeout: Duration::from_secs(30),
             first_byte_timeout: Duration::from_secs(30),
             between_bytes_timeout: Duration::from_secs(30),
@@ -137,6 +139,12 @@ impl WasiHttpConfig {
         Ok(self)
     }
 
+    /// Apply a host-owned response ceiling in addition to the guest request limit.
+    pub fn max_response_bytes(mut self, limit: u64) -> Self {
+        self.max_response_bytes = limit;
+        self
+    }
+
     fn permits(&self, uri: &Uri) -> bool {
         request_origin(uri).is_some_and(|origin| self.allowed_origins.contains(&origin))
     }
@@ -165,7 +173,7 @@ pub async fn send(
     if let Some(reason) = &config.unsupported_reason {
         return Err(HttpError::Unsupported(reason.to_string()));
     }
-    let max_response_bytes = request.max_response_bytes;
+    let max_response_bytes = request.max_response_bytes.min(config.max_response_bytes);
     let uri = request
         .url
         .parse::<Uri>()
