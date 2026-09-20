@@ -24,6 +24,8 @@ world smoke {
   }
   record response { body: body, status: u16 }
   export run: func(request: request) -> result<response, string>;
+  export optional: func(value: option<string>);
+  export fallible: func(value: result<string, string>);
 }
 "#;
 
@@ -47,10 +49,14 @@ fn component_bytes() -> Vec<u8> {
 }
 
 fn config(component: &str, argument: &str) -> String {
+    entry_config(component, "run", argument)
+}
+
+fn entry_config(component: &str, entry: &str, argument: &str) -> String {
     format!(
         r#"{{}}
   :component |{component}
-  :entry |run
+  :entry |{entry}
   :arguments $ []
     {argument}
   :max-response-bytes 4096
@@ -189,6 +195,29 @@ async fn rejects_out_of_range_values_with_a_field_path() {
         .expect_err("reject negative u64");
     assert!(error.contains("arguments[0] (request).max-response-bytes"));
     assert!(error.contains(":: :u64 |decimal"));
+}
+
+#[tokio::test]
+async fn rejects_nominal_option_and_result_cases() {
+    let directory = tempdir().expect("create codec temp directory");
+    fs::write(directory.path().join("codec.wasm"), component_bytes())
+        .expect("write codec component");
+    let config_path = directory.path().join("capabilities.cirru");
+
+    for (entry, value) in [
+        ("optional", "%:: 'Option 'some |value"),
+        ("fallible", "%:: 'Result 'ok |value"),
+    ] {
+        fs::write(&config_path, entry_config("codec.wasm", entry, value))
+            .expect("write nominal enum config");
+        let error = run_config_file(&config_path)
+            .await
+            .expect_err("reject nominal Option or Result case");
+        assert!(
+            error.contains("arguments[0] (value) must use an unqualified :: case"),
+            "unexpected {entry} error: {error}"
+        );
+    }
 }
 
 #[tokio::test]

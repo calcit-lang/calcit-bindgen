@@ -83,6 +83,7 @@ jobs:
           cargo run -- generate "$RUNNER_TEMP/wasi-http-interface.cirru" \
             --core-module "$RUNNER_TEMP/wasi-http-core/program.wasm" \
             --out "$RUNNER_TEMP/wasi-http-package"
+          cargo test --features wasmtime-http
           CALCIT_BINDGEN_REAL_HTTP_COMPONENT="$RUNNER_TEMP/wasi-http-package/component/component.wasm" \
             cargo test --features wasmtime-http --test wasmtime_host_values \
               drives_real_calcit_http_success_denial_and_limit_results -- --ignored --exact
