@@ -77,7 +77,9 @@ Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String、
 `wasmtime-http` feature 和现有 `generate` / `check` / manifest，不增加命令入口。
 adapter 默认拒绝全部网络 origin，调用方必须逐个授予 `scheme://authority`，并由每次请求的
 `max-response-bytes` 与宿主上限共同约束完整缓冲。宿主 capability 使用 Cirru EDN，网络与文件系统
-均默认拒绝；完整接入方式见 [WASI HTTP 文档](docs/wasi-http.md)。
+均默认拒绝；同一配置中的 `arguments` 会按 Component function type 严格解码，结果也以 Cirru EDN
+写到 stdout。零参数 Unit 入口继续兼容，不增加另一套 host 或 JSON 默认。完整接入方式见
+[WASI HTTP 文档](docs/wasi-http.md)。
 Component v3 的 `invocation` 会被显式校验；`sync` 生成普通 `func`，`async` 生成 WASI 0.3 原生
 `async func`。打包仍要求 core module 实现对应的 Canonical ABI，缺少 async builtin wiring 时会在写入产物前失败。
 仓库内 Wasmtime 47 验收会实际调用 async export、typed Result success/error，并让 concurrent async host import
@@ -237,7 +239,10 @@ interface, generation also owns `rust/wasmtime_http_adapter.rs` and a runnable
 `check`, and manifest lifecycle, without another command. The adapter is
 backed by the stable WASI 0.2 HTTP transport in Wasmtime 47, denies all origins
 and preopened directories by default, and combines the host response limit with
-the explicit per-request limit. See the Chinese
+the explicit per-request limit. Its existing Cirru EDN configuration also
+decodes `arguments` strictly from the Component function type and writes typed
+results as Cirru EDN to stdout; zero-parameter Unit entries remain compatible.
+See the Chinese
 [WASI HTTP guide](docs/wasi-http.md) for integration details.
 
 The Rust backend accepts only `native + sync + edn-buffer-v1`. It emits

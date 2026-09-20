@@ -19,7 +19,14 @@ Component packaging 会保留 `calcit:wasi-http/client` 这一 package-qualified
 ```cirru
 {}
   :component |/absolute/path/to/component.wasm
-  :entry |run
+  :entry |call-host-http-request
+  :arguments $ []
+    {}
+      :body $ :: :empty
+      :headers $ []
+      :max-response-bytes 65536
+      :method $ :: :get
+      :url |https://api.example.com/items
   :max-response-bytes 1048576
   :allowed-origins $ []
     |https://api.example.com
@@ -39,7 +46,17 @@ cargo run --manifest-path generated-component/rust/wasmtime-http-host/Cargo.toml
 
 生成目录完全由 `generate` 管理；capability 文件和业务封装归用户维护。`allowed-origins` 与
 `preopens` 缺省时都为空，未知字段会被拒绝；文件只接受明确的 `:read` / `:read-write` preopen。
-宿主只调用零参数、返回 Unit 的 export，以保持入口可审计，不引入动态参数 codec。
+`arguments` 缺省为空列表。宿主从 Component function type 读取参数形状，在实例调用前严格解码，
+并把结果作为 Cirru EDN 写到 stdout；参数数量、字段、case、整数范围或 payload 不匹配都会带路径失败。
+零参数 Unit 入口保持兼容且不输出结果。
+
+数据映射保持一套确定规则：Bool、String 与有限 Number 使用对应 Cirru EDN 标量；WIT 整数只接受
+范围内的无小数 Number；超出 Cirru EDN `f64` 无损范围的 64 位整数使用明确的
+`:: :s64 |decimal` / `:: :u64 |decimal`，保证完整范围不丢精度。`list<u8>` 使用 `buf`，其他 list
+使用 `[]`；record 使用 tag-key map；variant 与 enum 使用未限定的 `::`；Option
+使用 `:: :none` / `:: :some value`，Result 使用 `:: :ok value` / `:: :err value`。不接受隐式 coercion、
+额外 record 字段、`%::` nominal 名称或 JSON fallback。resource、future、stream 等宿主所有权值也会
+明确拒绝，而不是猜测 Dynamic 表示。
 
 ## 自定义宿主依赖
 
@@ -47,7 +64,7 @@ cargo run --manifest-path generated-component/rust/wasmtime-http-host/Cargo.toml
 
 ```toml
 [dependencies]
-calcit-bindgen = { version = "0.1.3", features = ["wasmtime-http"] }
+calcit-bindgen = { version = "0.1.4", features = ["wasmtime-http"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 wasmtime = { version = "=47.0.4", default-features = false, features = [
   "component-model",

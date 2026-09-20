@@ -75,6 +75,15 @@ jobs:
             CALCIT_BINDGEN_STREAM_CONTRACT="$RUNNER_TEMP/component-wasm-stream-interface.cirru" \
             CALCIT_BINDGEN_STREAM_CORE="$RUNNER_TEMP/component-wasm-stream-core/program.wasm" \
             cargo test --test async_component packages_real_calcit_stackless_lifecycle_surface -- --ignored --exact
+      - name: Drive the real Calcit HTTP export from Cirru EDN
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo run -- generate "$RUNNER_TEMP/component-wasm-async-import-interface.cirru" \
+            --core-module "$RUNNER_TEMP/component-wasm-async-import-core/program.wasm" \
+            --out "$RUNNER_TEMP/component-wasm-async-import-package"
+          CALCIT_BINDGEN_REAL_HTTP_COMPONENT="$RUNNER_TEMP/component-wasm-async-import-package/component/component.wasm" \
+            cargo test --features wasmtime-http --test wasmtime_host_values \
+              drives_real_calcit_http_success_denial_and_limit_results -- --ignored --exact
       - run: cargo package
 
   docs:
