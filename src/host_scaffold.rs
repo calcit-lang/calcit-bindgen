@@ -29,7 +29,7 @@ preopen 的 `:access` 只能是 `:read` 或 `:read-write`。`max-response-bytes`
 "#;
 
 const CONFIG_EXAMPLE: &str = r#"{}
-  :component |../../../component/component.wasm
+  :component |../../component/component.wasm
   :entry |run
   :max-response-bytes 1048576
   :allowed-origins $ []
@@ -83,5 +83,6 @@ mod tests {
             .1;
         assert!(config.contains(":allowed-origins $ []"));
         assert!(config.contains(":preopens $ []"));
+        assert!(config.contains(":component |../../component/component.wasm"));
     }
 }
