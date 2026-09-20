@@ -15,8 +15,8 @@ async fn main() {
 const README: &str = r#"# Calcit buffered HTTP Wasmtime host
 
 此目录由 `calcit-bindgen generate` 管理，不要直接修改。复制
-`capabilities.example.cirru` 到生成目录之外，明确填写 Component、零参数 Unit 入口、
-HTTP origin、宿主响应上限与必要 preopen，然后运行：
+`capabilities.example.cirru` 到生成目录之外，明确填写 Component、入口、严格类型的
+Cirru EDN 参数、HTTP origin、宿主响应上限与必要 preopen，然后运行：
 
 ```bash
 cargo run --manifest-path rust/wasmtime-http-host/Cargo.toml -- /path/to/capabilities.cirru
@@ -24,13 +24,14 @@ cargo run --manifest-path rust/wasmtime-http-host/Cargo.toml -- /path/to/capabil
 
 `allowed-origins` 与 `preopens` 缺省时均为空；没有显式授权就不能访问网络或宿主文件。
 preopen 的 `:access` 只能是 `:read` 或 `:read-write`。`max-response-bytes` 是宿主上限，
-会与 Calcit 请求里的上限取较小值。当前 host 只调用零参数、返回 Unit 的顶层 export，
-避免引入动态参数 codec；更复杂调用应由业务专用宿主封装。
+会与 Calcit 请求里的上限取较小值。`arguments` 会在调用前按 Component function type
+严格解码；结果以 Cirru EDN 写到 stdout，诊断只写 stderr。零参数 Unit 入口继续使用空列表。
 "#;
 
 const CONFIG_EXAMPLE: &str = r#"{}
   :component |../../component/component.wasm
   :entry |run
+  :arguments $ []
   :max-response-bytes 1048576
   :allowed-origins $ []
   :preopens $ []
@@ -83,6 +84,7 @@ mod tests {
             .1;
         assert!(config.contains(":allowed-origins $ []"));
         assert!(config.contains(":preopens $ []"));
+        assert!(config.contains(":arguments $ []"));
         assert!(config.contains(":component |../../component/component.wasm"));
     }
 }
