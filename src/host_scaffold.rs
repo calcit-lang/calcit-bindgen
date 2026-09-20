@@ -5,9 +5,9 @@ use crate::{
 
 const MAIN: &str = r#"#[tokio::main]
 async fn main() {
-    if let Err(error) = calcit_bindgen::wasmtime_host::run_from_args().await {
-        eprintln!("calcit Wasmtime host failed: {error}");
-        std::process::exit(1);
+    let code = calcit_bindgen::wasmtime_host::run_from_args_with_exit_code().await;
+    if code != 0 {
+        std::process::exit(code);
     }
 }
 "#;
@@ -26,6 +26,11 @@ cargo run --manifest-path rust/wasmtime-http-host/Cargo.toml -- /path/to/capabil
 preopen 的 `:access` 只能是 `:read` 或 `:read-write`。`max-response-bytes` 是宿主上限，
 会与 Calcit 请求里的上限取较小值。`arguments` 会在调用前按 Component function type
 严格解码；结果以 Cirru EDN 写到 stdout，诊断只写 stderr。零参数 Unit 入口继续使用空列表。
+
+需要文件化调用时，`:arguments-file` 从已授权 guest path 读取完整 Cirru EDN 参数列表，
+`:result-file` 把 stdout 的规范结果同步写入 `:read-write` preopen。两者都不接受 host path、
+越界或 symlink 逃逸。退出码固定为：成功 0、输入或 invalid-request 2、capability denied 3、
+transport 4、response-too-large 5、unsupported 6、其他宿主失败 1。
 
 Cargo 运行产生的 `Cargo.lock` 与 `target/` 不属于生成 manifest；`check` 会忽略它们，下一次
 `generate` 会随整个受管目录一起重建。capability 配置与其他用户文件必须放在生成目录之外。
@@ -74,6 +79,12 @@ mod tests {
     #[test]
     fn pins_the_generator_version_and_keeps_capabilities_default_deny() {
         let files = render();
+        let main = &files
+            .iter()
+            .find(|(path, _)| *path == WASMTIME_HTTP_HOST_MAIN_FILE)
+            .expect("generated host main")
+            .1;
+        assert!(main.contains("run_from_args_with_exit_code"));
         let cargo = &files
             .iter()
             .find(|(path, _)| *path == WASMTIME_HTTP_HOST_CARGO_FILE)

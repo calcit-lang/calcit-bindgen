@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use calcit_bindgen::wasmtime_host::run_config_file;
+use calcit_bindgen::wasmtime_host::{exit_code, run_config_file, run_config_file_with_exit_code};
 use tempfile::tempdir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -66,7 +66,25 @@ fn entry_config(component: &str, entry: &str, argument: &str) -> String {
     )
 }
 
-fn http_config(component: &str, url: &str, limit: u64, allowed_origin: Option<&str>) -> String {
+fn http_arguments(url: &str, limit: u64) -> String {
+    format!(
+        r#"[]
+  {{}}
+    :body $ :: :empty
+    :headers $ []
+    :max-response-bytes {limit}
+    :method $ :: :get
+    :url |{url}
+"#
+    )
+}
+
+fn file_http_config(
+    component: &str,
+    preopen: &str,
+    limit: u64,
+    allowed_origin: Option<&str>,
+) -> String {
     let origins = allowed_origin
         .map(|origin| format!("[] |{origin}"))
         .unwrap_or_else(|| "[]".to_owned());
@@ -75,15 +93,12 @@ fn http_config(component: &str, url: &str, limit: u64, allowed_origin: Option<&s
   :component |{component}
   :entry |call-host-http-request
   :arguments $ []
-    {{}}
-      :body $ :: :empty
-      :headers $ []
-      :max-response-bytes {limit}
-      :method $ :: :get
-      :url |{url}
+  :arguments-file |/data/request.cirru
+  :result-file |/data/result.cirru
   :max-response-bytes {limit}
   :allowed-origins $ {origins}
   :preopens $ []
+    {{}} (:host |{preopen}) (:guest |/data) (:access :read-write)
 "#
     )
 }
@@ -221,6 +236,55 @@ async fn rejects_nominal_option_and_result_cases() {
 }
 
 #[tokio::test]
+async fn file_backed_inputs_fail_before_component_loading_with_stable_exits() {
+    let directory = tempdir().expect("create file-backed host directory");
+    let config_path = directory.path().join("capabilities.cirru");
+    let arguments_path = directory.path().join("arguments.cirru");
+    let root = directory.path().to_str().expect("UTF-8 temp path");
+
+    fs::write(&arguments_path, "{} (:not |a-list)").expect("write invalid arguments");
+    fs::write(
+        &config_path,
+        format!(
+            r#"{{}}
+  :component |missing.wasm
+  :entry |run
+  :arguments-file |/data/arguments.cirru
+  :max-response-bytes 64
+  :preopens $ []
+    {{}} (:host |{root}) (:guest |/data) (:access :read)
+"#
+        ),
+    )
+    .expect("write invalid input config");
+    assert_eq!(
+        run_config_file_with_exit_code(&config_path).await,
+        exit_code::INVALID_INPUT
+    );
+
+    fs::write(&arguments_path, "[]").expect("write valid arguments");
+    fs::write(
+        &config_path,
+        format!(
+            r#"{{}}
+  :component |missing.wasm
+  :entry |run
+  :arguments-file |/data/arguments.cirru
+  :result-file |/data/result.cirru
+  :max-response-bytes 64
+  :preopens $ []
+    {{}} (:host |{root}) (:guest |/data) (:access :read)
+"#
+        ),
+    )
+    .expect("write denied output config");
+    assert_eq!(
+        run_config_file_with_exit_code(&config_path).await,
+        exit_code::CAPABILITY_DENIED
+    );
+}
+
+#[tokio::test]
 #[ignore = "requires a real Calcit HTTP Component from CALCIT_BINDGEN_REAL_HTTP_COMPONENT"]
 async fn drives_real_calcit_http_success_denial_and_limit_results() {
     let component = std::env::var("CALCIT_BINDGEN_REAL_HTTP_COMPONENT")
@@ -228,32 +292,95 @@ async fn drives_real_calcit_http_success_denial_and_limit_results() {
     let directory = tempdir().expect("create real HTTP host temp directory");
     let config_path = directory.path().join("capabilities.cirru");
 
+    let request_path = directory.path().join("request.cirru");
+    let result_path = directory.path().join("result.cirru");
+    let preopen = directory.path().to_str().expect("UTF-8 temp path");
+
+    fs::write(
+        &request_path,
+        http_arguments("http://127.0.0.1:1/items", 64),
+    )
+    .expect("write denied request");
     fs::write(
         &config_path,
-        http_config(&component, "http://127.0.0.1:1/items", 64, None),
+        file_http_config(&component, preopen, 64, None),
     )
     .expect("write denied config");
-    run_config_file(&config_path)
-        .await
-        .expect("encode typed capability denial");
+    assert_eq!(
+        run_config_file_with_exit_code(&config_path).await,
+        exit_code::CAPABILITY_DENIED
+    );
+    assert!(
+        fs::read_to_string(&result_path)
+            .expect("read denied result")
+            .contains("capability-denied")
+    );
 
     let origin = serve_once(b"ok").await;
     fs::write(
-        &config_path,
-        http_config(&component, &format!("{origin}/items"), 64, Some(&origin)),
+        &request_path,
+        http_arguments(&format!("{origin}/items"), 64),
     )
-    .expect("write success config");
-    run_config_file(&config_path)
-        .await
-        .expect("encode typed HTTP success");
-
-    let origin = serve_once(b"123456789").await;
+    .expect("write success request");
     fs::write(
         &config_path,
-        http_config(&component, &format!("{origin}/items"), 8, Some(&origin)),
+        file_http_config(&component, preopen, 64, Some(&origin)),
+    )
+    .expect("write success config");
+    assert_eq!(
+        run_config_file_with_exit_code(&config_path).await,
+        exit_code::SUCCESS
+    );
+    assert!(
+        fs::read_to_string(&result_path)
+            .expect("read success result")
+            .starts_with(":: 'ok")
+    );
+
+    let origin = serve_once(b"123456789").await;
+    fs::write(&request_path, http_arguments(&format!("{origin}/items"), 8))
+        .expect("write response limit request");
+    fs::write(
+        &config_path,
+        file_http_config(&component, preopen, 8, Some(&origin)),
     )
     .expect("write response limit config");
-    run_config_file(&config_path)
+    assert_eq!(
+        run_config_file_with_exit_code(&config_path).await,
+        exit_code::RESPONSE_TOO_LARGE
+    );
+    assert!(
+        fs::read_to_string(&result_path)
+            .expect("read response limit result")
+            .contains("response-too-large")
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .expect("encode typed response-too-large result");
+        .expect("reserve closed transport address");
+    let closed_origin = format!(
+        "http://{}",
+        listener.local_addr().expect("read closed address")
+    );
+    drop(listener);
+    fs::write(
+        &request_path,
+        http_arguments(&format!("{closed_origin}/items"), 64),
+    )
+    .expect("write transport request");
+    fs::write(
+        &config_path,
+        file_http_config(&component, preopen, 64, Some(&closed_origin)),
+    )
+    .expect("write transport config");
+    assert_eq!(
+        run_config_file_with_exit_code(&config_path).await,
+        exit_code::TRANSPORT
+    );
+
+    fs::write(&request_path, "{} (:not |a-list)").expect("write invalid argument input");
+    assert_eq!(
+        run_config_file_with_exit_code(&config_path).await,
+        exit_code::INVALID_INPUT
+    );
 }
