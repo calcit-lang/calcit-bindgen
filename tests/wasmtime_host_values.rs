@@ -362,7 +362,10 @@ async fn drives_real_calcit_http_success_denial_and_limit_results() {
         "http://{}",
         listener.local_addr().expect("read closed address")
     );
-    drop(listener);
+    let close_connection = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept transport request");
+        drop(stream);
+    });
     fs::write(
         &request_path,
         http_arguments(&format!("{closed_origin}/items"), 64),
@@ -377,6 +380,7 @@ async fn drives_real_calcit_http_success_denial_and_limit_results() {
         run_config_file_with_exit_code(&config_path).await,
         exit_code::TRANSPORT
     );
+    close_connection.await.expect("close transport connection");
 
     fs::write(&request_path, "{} (:not |a-list)").expect("write invalid argument input");
     assert_eq!(

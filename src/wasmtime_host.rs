@@ -2,8 +2,12 @@
 
 use std::env;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Component as PathComponent, Path, PathBuf};
 
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, File, OpenOptions};
 use cirru_edn::Edn;
 use wasmtime::component::{Component, Linker, ResourceTable, Type, Val};
 use wasmtime::{Config, Engine, Store};
@@ -187,13 +191,13 @@ async fn run_config_file_inner(path: impl AsRef<Path>) -> Result<i32, HostFailur
 
 async fn run(mut config: HostConfig) -> Result<i32, HostFailure> {
     if let Some(arguments_file) = &config.arguments_file {
-        let path = resolve_preopen_path(&config.preopens, arguments_file, false)?;
-        config.arguments = read_arguments_file(&path)?;
+        let file = open_preopen_file(&config.preopens, arguments_file, false)?;
+        config.arguments = read_arguments_file(file, arguments_file)?;
     }
-    let result_path = config
+    let mut result_file = config
         .result_file
         .as_deref()
-        .map(|path| resolve_preopen_path(&config.preopens, path, true))
+        .map(|path| open_preopen_file(&config.preopens, path, true).map(|file| (file, path)))
         .transpose()?;
 
     let mut engine_config = Config::new();
@@ -317,13 +321,18 @@ async fn run(mut config: HostConfig) -> Result<i32, HostFailure> {
         })?;
         let formatted = formatted.trim();
         println!("{formatted}");
-        if let Some(path) = result_path {
-            fs::write(&path, format!("{formatted}\n")).map_err(|error| {
+        if let Some((file, guest_path)) = result_file.as_mut() {
+            file.set_len(0).map_err(|error| {
                 HostFailure::capability_denied(format!(
-                    "failed to write Cirru EDN Component result to {}: {error}",
-                    path.display()
+                    "failed to truncate Cirru EDN Component result file {guest_path:?}: {error}"
                 ))
             })?;
+            file.write_all(format!("{formatted}\n").as_bytes())
+                .map_err(|error| {
+                    HostFailure::capability_denied(format!(
+                        "failed to write Cirru EDN Component result to {guest_path:?}: {error}"
+                    ))
+                })?;
         }
     }
     Ok(exit)
@@ -396,59 +405,65 @@ fn validate_preopen_guest_paths(preopens: &[HostPreopen]) -> Result<(), String> 
     Ok(())
 }
 
-fn read_arguments_file(path: &Path) -> Result<Vec<Edn>, HostFailure> {
-    let metadata = fs::metadata(path).map_err(|error| {
-        HostFailure::invalid_input(format!(
-            "failed to inspect Cirru EDN arguments file {}: {error}",
-            path.display()
-        ))
+fn read_arguments_file(mut file: File, guest_path: &str) -> Result<Vec<Edn>, HostFailure> {
+    let metadata = file.metadata().map_err(|error| {
+        input_file_error(
+            format!("failed to inspect Cirru EDN arguments file {guest_path:?}"),
+            error,
+        )
     })?;
     if metadata.len() > MAX_ARGUMENTS_FILE_BYTES {
         return Err(HostFailure::invalid_input(format!(
-            "Cirru EDN arguments file {} exceeds the {} byte limit",
-            path.display(),
-            MAX_ARGUMENTS_FILE_BYTES
+            "Cirru EDN arguments file {guest_path:?} exceeds the {MAX_ARGUMENTS_FILE_BYTES} byte limit"
         )));
     }
-    let bytes = fs::read(path).map_err(|error| {
-        HostFailure::invalid_input(format!(
-            "failed to read Cirru EDN arguments file {}: {error}",
-            path.display()
-        ))
-    })?;
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(MAX_ARGUMENTS_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            input_file_error(
+                format!("failed to read Cirru EDN arguments file {guest_path:?}"),
+                error,
+            )
+        })?;
     if bytes.len() as u64 > MAX_ARGUMENTS_FILE_BYTES {
         return Err(HostFailure::invalid_input(format!(
-            "Cirru EDN arguments file {} exceeds the {} byte limit",
-            path.display(),
-            MAX_ARGUMENTS_FILE_BYTES
+            "Cirru EDN arguments file {guest_path:?} exceeds the {MAX_ARGUMENTS_FILE_BYTES} byte limit"
         )));
     }
     let source = std::str::from_utf8(&bytes).map_err(|error| {
         HostFailure::invalid_input(format!(
-            "Cirru EDN arguments file {} is not UTF-8: {error}",
-            path.display()
+            "Cirru EDN arguments file {guest_path:?} is not UTF-8: {error}"
         ))
     })?;
     let value = cirru_edn::parse(source).map_err(|error| {
         HostFailure::invalid_input(format!(
-            "failed to parse Cirru EDN arguments file {}: {error}",
-            path.display()
+            "failed to parse Cirru EDN arguments file {guest_path:?}: {error}"
         ))
     })?;
     match value {
         Edn::List(values) => Ok(values.0.to_vec()),
         _ => Err(HostFailure::invalid_input(format!(
-            "Cirru EDN arguments file {} must contain one top-level list",
-            path.display()
+            "Cirru EDN arguments file {guest_path:?} must contain one top-level list"
         ))),
     }
 }
 
-fn resolve_preopen_path(
+fn input_file_error(context: String, error: std::io::Error) -> HostFailure {
+    let message = format!("{context}: {error}");
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        HostFailure::capability_denied(message)
+    } else {
+        HostFailure::invalid_input(message)
+    }
+}
+
+fn open_preopen_file(
     preopens: &[HostPreopen],
     guest_path: &str,
     write: bool,
-) -> Result<PathBuf, HostFailure> {
+) -> Result<File, HostFailure> {
     let requested = guest_path_components(guest_path, "file path")?;
     let mut matches = Vec::new();
     for preopen in preopens {
@@ -469,64 +484,39 @@ fn resolve_preopen_path(
         )));
     }
 
-    let root = fs::canonicalize(&preopen.host).map_err(|error| {
+    let root = Dir::open_ambient_dir(&preopen.host, ambient_authority()).map_err(|error| {
         HostFailure::capability_denied(format!(
-            "failed to resolve preopen host directory {}: {error}",
+            "failed to open preopen host directory {}: {error}",
             preopen.host.display()
         ))
     })?;
-    if !root.is_dir() {
-        return Err(HostFailure::capability_denied(format!(
-            "preopen host path {} is not a directory",
-            preopen.host.display()
-        )));
-    }
-    let target = requested[prefix_length..]
+    let relative = requested[prefix_length..]
         .iter()
-        .fold(root.clone(), |path, segment| path.join(segment));
-    let checked = if write {
-        match fs::symlink_metadata(&target) {
-            Ok(_) => fs::canonicalize(&target).map_err(|error| {
-                HostFailure::capability_denied(format!(
-                    "failed to resolve result file {}: {error}",
-                    target.display()
-                ))
-            })?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let parent = target.parent().ok_or_else(|| {
-                    HostFailure::capability_denied(format!(
-                        "result file {guest_path:?} has no parent directory"
-                    ))
-                })?;
-                fs::canonicalize(parent).map_err(|error| {
-                    HostFailure::capability_denied(format!(
-                        "failed to resolve result directory {}: {error}",
-                        parent.display()
-                    ))
-                })?
-            }
-            Err(error) => {
-                return Err(HostFailure::capability_denied(format!(
-                    "failed to inspect result file {}: {error}",
-                    target.display()
-                )));
-            }
-        }
-    } else {
-        fs::canonicalize(&target).map_err(|error| {
-            HostFailure::invalid_input(format!(
-                "failed to resolve arguments file {}: {error}",
-                target.display()
-            ))
-        })?
-    };
-    if !checked.starts_with(&root) {
+        .fold(PathBuf::new(), |path, segment| path.join(segment));
+    if relative.as_os_str().is_empty() {
         return Err(HostFailure::capability_denied(format!(
-            "guest path {guest_path:?} escapes preopen {}",
-            preopen.host.display()
+            "guest path {guest_path:?} must name a file below its preopen"
         )));
     }
-    Ok(target)
+    let mut options = OpenOptions::new();
+    options.follow(FollowSymlinks::No);
+    if write {
+        options.write(true).create(true);
+    } else {
+        options.read(true);
+    }
+    root.open_with(&relative, &options).map_err(|error| {
+        if write {
+            HostFailure::capability_denied(format!(
+                "failed to open Cirru EDN result file {guest_path:?}: {error}"
+            ))
+        } else {
+            input_file_error(
+                format!("failed to open Cirru EDN arguments file {guest_path:?}"),
+                error,
+            )
+        }
+    })
 }
 
 fn guest_path_components(path: &str, context: &str) -> Result<Vec<String>, HostFailure> {
@@ -1264,19 +1254,16 @@ mod tests {
             guest: "/data".to_owned(),
             writable: false,
         };
+        open_preopen_file(std::slice::from_ref(&read_only), "/data/input.cirru", false)
+            .expect("open readable input");
         assert_eq!(
-            resolve_preopen_path(std::slice::from_ref(&read_only), "/data/input.cirru", false)
-                .expect("resolve readable input"),
-            fs::canonicalize(input).expect("canonical input")
-        );
-        assert_eq!(
-            resolve_preopen_path(std::slice::from_ref(&read_only), "/data/result.cirru", true)
+            open_preopen_file(std::slice::from_ref(&read_only), "/data/result.cirru", true)
                 .unwrap_err()
                 .exit_code(),
             exit_code::CAPABILITY_DENIED
         );
         assert_eq!(
-            resolve_preopen_path(
+            open_preopen_file(
                 std::slice::from_ref(&read_only),
                 "/other/input.cirru",
                 false
@@ -1286,7 +1273,7 @@ mod tests {
             exit_code::CAPABILITY_DENIED
         );
         assert_eq!(
-            resolve_preopen_path(std::slice::from_ref(&read_only), "/data/../secret", false)
+            open_preopen_file(std::slice::from_ref(&read_only), "/data/../secret", false)
                 .unwrap_err()
                 .exit_code(),
             exit_code::CAPABILITY_DENIED
@@ -1296,13 +1283,8 @@ mod tests {
             writable: true,
             ..read_only
         };
-        assert_eq!(
-            resolve_preopen_path(&[writable], "/data/result.cirru", true)
-                .expect("resolve writable output"),
-            fs::canonicalize(directory.path())
-                .expect("canonical preopen root")
-                .join("result.cirru")
-        );
+        open_preopen_file(&[writable], "/data/result.cirru", true).expect("open writable output");
+        assert!(directory.path().join("result.cirru").is_file());
     }
 
     #[cfg(unix)]
@@ -1326,11 +1308,45 @@ mod tests {
             ("/data/escape/input.cirru", false),
             ("/data/escape/result.cirru", true),
         ] {
-            let error = resolve_preopen_path(std::slice::from_ref(&preopen), path, write)
+            let error = open_preopen_file(std::slice::from_ref(&preopen), path, write)
                 .expect_err("reject symlink escape");
             assert_eq!(error.exit_code(), exit_code::CAPABILITY_DENIED);
-            assert!(error.message.contains("escapes preopen"));
+            assert!(error.message.contains("failed to open"));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_result_handle_cannot_be_redirected_after_validation() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().expect("create retained handle root");
+        let outside = directory.path().join("outside.cirru");
+        let result = directory.path().join("result.cirru");
+        fs::write(&outside, "outside").expect("write outside sentinel");
+        let preopen = HostPreopen {
+            host: directory.path().to_path_buf(),
+            guest: "/data".to_owned(),
+            writable: true,
+        };
+        let mut file = open_preopen_file(&[preopen], "/data/result.cirru", true)
+            .expect("retain validated result handle");
+        fs::remove_file(&result).expect("unlink validated result path");
+        symlink(&outside, &result).expect("replace result path with symlink");
+
+        file.write_all(b"safe").expect("write retained file handle");
+
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "outside");
+        assert_eq!(fs::read_to_string(&result).unwrap(), "outside");
+    }
+
+    #[test]
+    fn maps_input_permission_failures_to_capability_denied() {
+        let error = input_file_error(
+            "read input".to_owned(),
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
+        assert_eq!(error.exit_code(), exit_code::CAPABILITY_DENIED);
     }
 
     #[test]

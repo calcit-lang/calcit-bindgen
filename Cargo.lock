@@ -138,6 +138,8 @@ version = "0.1.6"
 dependencies = [
  "bytes",
  "calcit_native_ffi",
+ "cap-fs-ext",
+ "cap-std",
  "cirru_edn",
  "clap",
  "http",
