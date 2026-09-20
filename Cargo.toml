@@ -13,6 +13,8 @@ categories = ["development-tools::ffi", "command-line-utilities"]
 default = []
 wasmtime-http = [
   "dep:bytes",
+  "dep:cap-fs-ext",
+  "dep:cap-std",
   "dep:http",
   "dep:http-body-util",
   "dep:tokio",
@@ -23,6 +25,8 @@ wasmtime-http = [
 
 [dependencies]
 bytes = { version = "1", optional = true }
+cap-fs-ext = { version = "4", optional = true }
+cap-std = { version = "4", optional = true }
 clap = { version = "4.5", features = ["derive"] }
 cirru_edn = "0.8.2"
 http = { version = "1", optional = true }

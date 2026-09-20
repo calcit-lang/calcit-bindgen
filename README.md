@@ -78,7 +78,9 @@ Component generation 当前严格接受 monomorphic Bool/Buffer/Number/String、
 adapter 默认拒绝全部网络 origin，调用方必须逐个授予 `scheme://authority`，并由每次请求的
 `max-response-bytes` 与宿主上限共同约束完整缓冲。宿主 capability 使用 Cirru EDN，网络与文件系统
 均默认拒绝；同一配置中的 `arguments` 会按 Component function type 严格解码，结果也以 Cirru EDN
-写到 stdout。零参数 Unit 入口继续兼容，不增加另一套 host 或 JSON 默认。完整接入方式见
+写到 stdout。需要文件化调用时，`:arguments-file` 与 `:result-file` 只通过显式 preopen 读取或写入同一
+Cirru EDN 数据，不接受 host path、越界或 JSON fallback；生成 host 还为闭合 HTTP failure 提供稳定退出码。
+零参数 Unit 入口继续兼容，不增加另一套 host 或 JSON 默认。完整接入方式见
 [WASI HTTP 文档](docs/wasi-http.md)。
 Component v3 的 `invocation` 会被显式校验；`sync` 生成普通 `func`，`async` 生成 WASI 0.3 原生
 `async func`。打包仍要求 core module 实现对应的 Canonical ABI，缺少 async builtin wiring 时会在写入产物前失败。
@@ -241,7 +243,10 @@ backed by the stable WASI 0.2 HTTP transport in Wasmtime 47, denies all origins
 and preopened directories by default, and combines the host response limit with
 the explicit per-request limit. Its existing Cirru EDN configuration also
 decodes `arguments` strictly from the Component function type and writes typed
-results as Cirru EDN to stdout; zero-parameter Unit entries remain compatible.
+results as Cirru EDN to stdout. Optional `arguments-file` and `result-file`
+paths reuse explicit preopens for the same Cirru EDN values, reject host paths
+and traversal, and preserve stable exits for the closed HTTP failures.
+Zero-parameter Unit entries remain compatible.
 See the Chinese
 [WASI HTTP guide](docs/wasi-http.md) for integration details.
 

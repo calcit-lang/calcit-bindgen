@@ -2,8 +2,12 @@
 
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::path::{Component as PathComponent, Path, PathBuf};
 
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, File, OpenOptions};
 use cirru_edn::Edn;
 use wasmtime::component::{Component, Linker, ResourceTable, Type, Val};
 use wasmtime::{Config, Engine, Store};
@@ -25,9 +29,68 @@ pub struct HostConfig {
     pub component: PathBuf,
     pub entry: String,
     pub arguments: Vec<Edn>,
+    pub arguments_file: Option<String>,
+    pub result_file: Option<String>,
     pub allowed_origins: Vec<String>,
     pub preopens: Vec<HostPreopen>,
     pub max_response_bytes: u64,
+}
+
+/// Stable process exits used by the generated buffered HTTP host.
+pub mod exit_code {
+    pub const SUCCESS: i32 = 0;
+    pub const INTERNAL: i32 = 1;
+    pub const INVALID_INPUT: i32 = 2;
+    pub const CAPABILITY_DENIED: i32 = 3;
+    pub const TRANSPORT: i32 = 4;
+    pub const RESPONSE_TOO_LARGE: i32 = 5;
+    pub const UNSUPPORTED: i32 = 6;
+}
+
+const MAX_ARGUMENTS_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug)]
+enum HostFailureKind {
+    Internal,
+    InvalidInput,
+    CapabilityDenied,
+}
+
+#[derive(Debug)]
+struct HostFailure {
+    kind: HostFailureKind,
+    message: String,
+}
+
+impl HostFailure {
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            kind: HostFailureKind::Internal,
+            message: message.into(),
+        }
+    }
+
+    fn invalid_input(message: impl Into<String>) -> Self {
+        Self {
+            kind: HostFailureKind::InvalidInput,
+            message: message.into(),
+        }
+    }
+
+    fn capability_denied(message: impl Into<String>) -> Self {
+        Self {
+            kind: HostFailureKind::CapabilityDenied,
+            message: message.into(),
+        }
+    }
+
+    fn exit_code(&self) -> i32 {
+        match self.kind {
+            HostFailureKind::Internal => exit_code::INTERNAL,
+            HostFailureKind::InvalidInput => exit_code::INVALID_INPUT,
+            HostFailureKind::CapabilityDenied => exit_code::CAPABILITY_DENIED,
+        }
+    }
 }
 
 struct HostState {
@@ -65,54 +128,107 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<HostConfig, String> {
 
 /// Run the generated Component with default-deny network and filesystem capabilities.
 pub async fn run_config_file(path: impl AsRef<Path>) -> Result<(), String> {
-    let config = load_config(path)?;
-    run(config).await
+    run_config_file_inner(path)
+        .await
+        .map(|_| ())
+        .map_err(|failure| failure.message)
+}
+
+/// Run one capability file with generated-host stderr and stable process semantics.
+pub async fn run_config_file_with_exit_code(path: impl AsRef<Path>) -> i32 {
+    match run_config_file_inner(path).await {
+        Ok(code) => code,
+        Err(failure) => {
+            eprintln!("calcit Wasmtime host failed: {}", failure.message);
+            failure.exit_code()
+        }
+    }
 }
 
 /// CLI entry used by the generated host crate.
 pub async fn run_from_args() -> Result<(), String> {
+    run_from_args_inner()
+        .await
+        .map(|_| ())
+        .map_err(|failure| failure.message)
+}
+
+/// CLI entry used by newly generated hosts that preserve typed failure exits.
+pub async fn run_from_args_with_exit_code() -> i32 {
+    match run_from_args_inner().await {
+        Ok(code) => code,
+        Err(failure) => {
+            eprintln!("calcit Wasmtime host failed: {}", failure.message);
+            failure.exit_code()
+        }
+    }
+}
+
+async fn run_from_args_inner() -> Result<i32, HostFailure> {
     let mut args = env::args_os();
     let program = args.next().unwrap_or_default();
     let config = args.next().ok_or_else(|| {
-        format!(
+        HostFailure::invalid_input(format!(
             "usage: {} <capabilities.cirru>",
             Path::new(&program)
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("calcit-wasmtime-http-host")
-        )
+        ))
     })?;
     if args.next().is_some() {
-        return Err("host accepts exactly one Cirru EDN capability file".to_owned());
+        return Err(HostFailure::invalid_input(
+            "host accepts exactly one Cirru EDN capability file",
+        ));
     }
-    run_config_file(config).await
+    run_config_file_inner(config).await
 }
 
-async fn run(config: HostConfig) -> Result<(), String> {
+async fn run_config_file_inner(path: impl AsRef<Path>) -> Result<i32, HostFailure> {
+    let config = load_config(path).map_err(HostFailure::invalid_input)?;
+    run(config).await
+}
+
+async fn run(mut config: HostConfig) -> Result<i32, HostFailure> {
+    if let Some(arguments_file) = &config.arguments_file {
+        let file = open_preopen_file(&config.preopens, arguments_file, false)?;
+        config.arguments = read_arguments_file(file, arguments_file)?;
+    }
+    let mut result_file = config
+        .result_file
+        .as_deref()
+        .map(|path| open_preopen_file(&config.preopens, path, true).map(|file| (file, path)))
+        .transpose()?;
+
     let mut engine_config = Config::new();
     engine_config
         .wasm_component_model_async(true)
         .wasm_component_model_async_stackful(true)
         .wasm_component_model_more_async_builtins(true)
         .concurrency_support(true);
-    let engine = Engine::new(&engine_config)
-        .map_err(|error| format!("failed to create Wasmtime engine: {error:#}"))?;
+    let engine = Engine::new(&engine_config).map_err(|error| {
+        HostFailure::internal(format!("failed to create Wasmtime engine: {error:#}"))
+    })?;
     let component = Component::from_file(&engine, &config.component).map_err(|error| {
-        format!(
+        HostFailure::internal(format!(
             "failed to load generated Component {}: {error:#}",
             config.component.display()
-        )
+        ))
     })?;
 
     let mut linker = Linker::new(&engine);
-    wasmtime_wasi::p2::add_to_linker_async(&mut linker)
-        .map_err(|error| format!("failed to link WASI capabilities: {error:#}"))?;
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|error| {
+        HostFailure::internal(format!("failed to link WASI capabilities: {error:#}"))
+    })?;
     let mut http = WasiHttpConfig::default().max_response_bytes(config.max_response_bytes);
     for origin in &config.allowed_origins {
-        http = http.allow_origin(origin)?;
+        http = http
+            .allow_origin(origin)
+            .map_err(HostFailure::invalid_input)?;
     }
-    wasmtime_http::add_to_linker(&mut linker, http)
-        .map_err(|error| format!("failed to link buffered HTTP adapter: {error:#}"))?;
+    wasmtime_http::add_to_linker(&mut linker, http).map_err(|error| {
+        HostFailure::internal(format!("failed to link buffered HTTP adapter: {error:#}"))
+    })?;
 
     let mut wasi = WasiCtxBuilder::new();
     // Reserve stdout for the host's machine-readable Cirru EDN result.
@@ -125,11 +241,11 @@ async fn run(config: HostConfig) -> Result<(), String> {
         };
         wasi.preopened_dir(&preopen.host, &preopen.guest, dir_perms, file_perms)
             .map_err(|error| {
-                format!(
+                HostFailure::capability_denied(format!(
                     "failed to grant preopen {} as {:?}: {error}",
                     preopen.host.display(),
                     preopen.guest
-                )
+                ))
             })?;
     }
     let mut store = Store::new(
@@ -142,24 +258,28 @@ async fn run(config: HostConfig) -> Result<(), String> {
     let instance = linker
         .instantiate_async(&mut store, &component)
         .await
-        .map_err(|error| format!("failed to instantiate generated Component: {error:#}"))?;
+        .map_err(|error| {
+            HostFailure::internal(format!(
+                "failed to instantiate generated Component: {error:#}"
+            ))
+        })?;
     let entry = instance
         .get_func(&mut store, config.entry.as_str())
         .ok_or_else(|| {
-            format!(
+            HostFailure::invalid_input(format!(
                 "generated Component has no function export {:?}",
                 config.entry
-            )
+            ))
         })?;
     let entry_type = entry.ty(&store);
     let parameters = entry_type.params().collect::<Vec<_>>();
     if parameters.len() != config.arguments.len() {
-        return Err(format!(
+        return Err(HostFailure::invalid_input(format!(
             "host entry {:?} expects {} argument(s), but :arguments contains {}",
             config.entry,
             parameters.len(),
             config.arguments.len()
-        ));
+        )));
     }
     let arguments = parameters
         .iter()
@@ -168,7 +288,8 @@ async fn run(config: HostConfig) -> Result<(), String> {
         .map(|(index, ((name, ty), value))| {
             decode_value(value, ty, &format!("arguments[{index}] ({name})"))
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(HostFailure::invalid_input)?;
     let result_types = entry_type.results().collect::<Vec<_>>();
     let mut results = vec![Val::Bool(false); result_types.len()];
     store
@@ -178,15 +299,43 @@ async fn run(config: HostConfig) -> Result<(), String> {
                 .await
         })
         .await
-        .map_err(|error| format!("failed to drive concurrent Component entry: {error:#}"))?
-        .map_err(|error| format!("Component entry {:?} failed: {error:#}", config.entry))?;
+        .map_err(|error| {
+            HostFailure::internal(format!(
+                "failed to drive concurrent Component entry: {error:#}"
+            ))
+        })?
+        .map_err(|error| {
+            HostFailure::internal(format!(
+                "Component entry {:?} failed: {error:#}",
+                config.entry
+            ))
+        })?;
+    let mut exit = exit_code::SUCCESS;
     if !results.is_empty() {
-        let output = encode_results(&results, &result_types)?;
-        let formatted = cirru_edn::format(&output, false)
-            .map_err(|error| format!("failed to format Component result as Cirru EDN: {error}"))?;
-        println!("{}", formatted.trim());
+        let output = encode_results(&results, &result_types).map_err(HostFailure::internal)?;
+        exit = classify_result_exit(&output, &result_types);
+        let formatted = cirru_edn::format(&output, false).map_err(|error| {
+            HostFailure::internal(format!(
+                "failed to format Component result as Cirru EDN: {error}"
+            ))
+        })?;
+        let formatted = formatted.trim();
+        println!("{formatted}");
+        if let Some((file, guest_path)) = result_file.as_mut() {
+            file.set_len(0).map_err(|error| {
+                HostFailure::capability_denied(format!(
+                    "failed to truncate Cirru EDN Component result file {guest_path:?}: {error}"
+                ))
+            })?;
+            file.write_all(format!("{formatted}\n").as_bytes())
+                .map_err(|error| {
+                    HostFailure::capability_denied(format!(
+                        "failed to write Cirru EDN Component result to {guest_path:?}: {error}"
+                    ))
+                })?;
+        }
     }
-    Ok(())
+    Ok(exit)
 }
 
 fn parse_config(value: &Edn, base: &Path) -> Result<HostConfig, String> {
@@ -199,6 +348,8 @@ fn parse_config(value: &Edn, base: &Path) -> Result<HostConfig, String> {
             "component",
             "entry",
             "arguments",
+            "arguments-file",
+            "result-file",
             "allowed-origins",
             "preopens",
             "max-response-bytes",
@@ -208,6 +359,13 @@ fn parse_config(value: &Edn, base: &Path) -> Result<HostConfig, String> {
     let component = required_string(values.0.iter(), "component")?;
     let entry = required_string(values.0.iter(), "entry")?;
     let arguments = optional_list(values.0.iter(), "arguments")?.to_vec();
+    let arguments_file = optional_string(values.0.iter(), "arguments-file")?;
+    if arguments_file.is_some() && !arguments.is_empty() {
+        return Err(
+            ":arguments-file cannot be combined with non-empty inline :arguments".to_owned(),
+        );
+    }
+    let result_file = optional_string(values.0.iter(), "result-file")?;
     let max_response_bytes = required_u64(values.0.iter(), "max-response-bytes")?;
     let allowed_origins = optional_list(values.0.iter(), "allowed-origins")?
         .iter()
@@ -219,14 +377,221 @@ fn parse_config(value: &Edn, base: &Path) -> Result<HostConfig, String> {
         .enumerate()
         .map(|(index, value)| parse_preopen(value, base, index))
         .collect::<Result<Vec<_>, _>>()?;
+    validate_preopen_guest_paths(&preopens)?;
     Ok(HostConfig {
         component: resolve_path(base, component),
         entry,
         arguments,
+        arguments_file,
+        result_file,
         allowed_origins,
         preopens,
         max_response_bytes,
     })
+}
+
+fn validate_preopen_guest_paths(preopens: &[HostPreopen]) -> Result<(), String> {
+    let mut seen = Vec::new();
+    for (index, preopen) in preopens.iter().enumerate() {
+        let normalized = guest_path_components(&preopen.guest, "preopen guest path")
+            .map_err(|failure| format!("preopens[{index}].guest: {}", failure.message))?;
+        if seen.contains(&normalized) {
+            return Err(format!(
+                "preopens[{index}].guest duplicates another normalized guest path"
+            ));
+        }
+        seen.push(normalized);
+    }
+    Ok(())
+}
+
+fn read_arguments_file(mut file: File, guest_path: &str) -> Result<Vec<Edn>, HostFailure> {
+    let metadata = file.metadata().map_err(|error| {
+        input_file_error(
+            format!("failed to inspect Cirru EDN arguments file {guest_path:?}"),
+            error,
+        )
+    })?;
+    if metadata.len() > MAX_ARGUMENTS_FILE_BYTES {
+        return Err(HostFailure::invalid_input(format!(
+            "Cirru EDN arguments file {guest_path:?} exceeds the {MAX_ARGUMENTS_FILE_BYTES} byte limit"
+        )));
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(MAX_ARGUMENTS_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            input_file_error(
+                format!("failed to read Cirru EDN arguments file {guest_path:?}"),
+                error,
+            )
+        })?;
+    if bytes.len() as u64 > MAX_ARGUMENTS_FILE_BYTES {
+        return Err(HostFailure::invalid_input(format!(
+            "Cirru EDN arguments file {guest_path:?} exceeds the {MAX_ARGUMENTS_FILE_BYTES} byte limit"
+        )));
+    }
+    let source = std::str::from_utf8(&bytes).map_err(|error| {
+        HostFailure::invalid_input(format!(
+            "Cirru EDN arguments file {guest_path:?} is not UTF-8: {error}"
+        ))
+    })?;
+    let value = cirru_edn::parse(source).map_err(|error| {
+        HostFailure::invalid_input(format!(
+            "failed to parse Cirru EDN arguments file {guest_path:?}: {error}"
+        ))
+    })?;
+    match value {
+        Edn::List(values) => Ok(values.0.to_vec()),
+        _ => Err(HostFailure::invalid_input(format!(
+            "Cirru EDN arguments file {guest_path:?} must contain one top-level list"
+        ))),
+    }
+}
+
+fn input_file_error(context: String, error: std::io::Error) -> HostFailure {
+    let message = format!("{context}: {error}");
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        HostFailure::capability_denied(message)
+    } else {
+        HostFailure::invalid_input(message)
+    }
+}
+
+fn open_preopen_file(
+    preopens: &[HostPreopen],
+    guest_path: &str,
+    write: bool,
+) -> Result<File, HostFailure> {
+    let requested = guest_path_components(guest_path, "file path")?;
+    let mut matches = Vec::new();
+    for preopen in preopens {
+        let prefix = guest_path_components(&preopen.guest, "preopen guest path")?;
+        if requested.starts_with(&prefix) {
+            matches.push((prefix.len(), preopen));
+        }
+    }
+    matches.sort_by_key(|(length, _)| std::cmp::Reverse(*length));
+    let Some((prefix_length, preopen)) = matches.first().copied() else {
+        return Err(HostFailure::capability_denied(format!(
+            "guest path {guest_path:?} is not granted by any :preopens entry"
+        )));
+    };
+    if write && !preopen.writable {
+        return Err(HostFailure::capability_denied(format!(
+            "guest path {guest_path:?} requires a :read-write preopen"
+        )));
+    }
+
+    let root = Dir::open_ambient_dir(&preopen.host, ambient_authority()).map_err(|error| {
+        HostFailure::capability_denied(format!(
+            "failed to open preopen host directory {}: {error}",
+            preopen.host.display()
+        ))
+    })?;
+    let relative = requested[prefix_length..]
+        .iter()
+        .fold(PathBuf::new(), |path, segment| path.join(segment));
+    if relative.as_os_str().is_empty() {
+        return Err(HostFailure::capability_denied(format!(
+            "guest path {guest_path:?} must name a file below its preopen"
+        )));
+    }
+    let mut options = OpenOptions::new();
+    options.follow(FollowSymlinks::No);
+    if write {
+        options.write(true).create(true);
+    } else {
+        options.read(true);
+    }
+    root.open_with(&relative, &options).map_err(|error| {
+        if write {
+            HostFailure::capability_denied(format!(
+                "failed to open Cirru EDN result file {guest_path:?}: {error}"
+            ))
+        } else {
+            input_file_error(
+                format!("failed to open Cirru EDN arguments file {guest_path:?}"),
+                error,
+            )
+        }
+    })
+}
+
+fn guest_path_components(path: &str, context: &str) -> Result<Vec<String>, HostFailure> {
+    let mut output = Vec::new();
+    for component in Path::new(path).components() {
+        match component {
+            PathComponent::RootDir | PathComponent::CurDir => {}
+            PathComponent::Normal(segment) => {
+                let segment = segment.to_str().ok_or_else(|| {
+                    HostFailure::capability_denied(format!("{context} must be valid UTF-8"))
+                })?;
+                output.push(segment.to_owned());
+            }
+            PathComponent::ParentDir => {
+                return Err(HostFailure::capability_denied(format!(
+                    "{context} cannot contain .. traversal"
+                )));
+            }
+            PathComponent::Prefix(_) => {
+                return Err(HostFailure::capability_denied(format!(
+                    "{context} cannot use a host path prefix"
+                )));
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn classify_result_exit(output: &Edn, result_types: &[Type]) -> i32 {
+    let Edn::Enum(result) = output else {
+        return exit_code::SUCCESS;
+    };
+    if result.type_name.is_some() || result.variant.as_ref() != "err" {
+        return exit_code::SUCCESS;
+    }
+    if !is_closed_http_result(result_types) {
+        return exit_code::INTERNAL;
+    }
+    let [Edn::Enum(error)] = result.extra.as_slice() else {
+        return exit_code::INTERNAL;
+    };
+    http_error_exit(error.variant.as_ref())
+}
+
+fn is_closed_http_result(result_types: &[Type]) -> bool {
+    let [Type::Result(result)] = result_types else {
+        return false;
+    };
+    let Some(Type::Variant(error)) = result.err() else {
+        return false;
+    };
+    let mut cases = error
+        .cases()
+        .map(|case| case.name.to_owned())
+        .collect::<Vec<_>>();
+    cases.sort();
+    cases
+        == [
+            "capability-denied",
+            "invalid-request",
+            "response-too-large",
+            "transport",
+            "unsupported",
+        ]
+}
+
+fn http_error_exit(case: &str) -> i32 {
+    match case {
+        "invalid-request" => exit_code::INVALID_INPUT,
+        "capability-denied" => exit_code::CAPABILITY_DENIED,
+        "transport" => exit_code::TRANSPORT,
+        "response-too-large" => exit_code::RESPONSE_TOO_LARGE,
+        "unsupported" => exit_code::UNSUPPORTED,
+        _ => exit_code::INTERNAL,
+    }
 }
 
 const MAX_LOSSLESS_INTEGER: f64 = 9_007_199_254_740_991.0;
@@ -722,6 +1087,16 @@ fn optional_list<'a>(
     }
 }
 
+fn optional_string<'a>(
+    values: impl Iterator<Item = (&'a Edn, &'a Edn)>,
+    name: &str,
+) -> Result<Option<String>, String> {
+    match find_field(values, name) {
+        Some(value) => edn_string(value, name).map(Some),
+        None => Ok(None),
+    }
+}
+
 fn edn_string(value: &Edn, path: &str) -> Result<String, String> {
     match value {
         Edn::Str(value) => Ok(value.to_string()),
@@ -741,6 +1116,7 @@ fn resolve_path(base: &Path, value: String) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn parses_default_deny_capabilities_and_explicit_preopens() {
@@ -759,6 +1135,8 @@ mod tests {
         assert_eq!(config.component, Path::new("/project/component/app.wasm"));
         assert_eq!(config.entry, "run");
         assert!(config.arguments.is_empty());
+        assert_eq!(config.arguments_file, None);
+        assert_eq!(config.result_file, None);
         assert_eq!(config.allowed_origins, vec!["https://api.example.com"]);
         assert_eq!(config.max_response_bytes, 4096);
         assert_eq!(
@@ -800,6 +1178,23 @@ mod tests {
                 .unwrap_err()
                 .contains("unknown field :allow-all-network")
         );
+
+        let value = cirru_edn::parse(
+            r#"{}
+  :component |app.wasm
+  :entry |run
+  :max-response-bytes 64
+  :preopens $ []
+    {} (:host |one) (:guest |/data) (:access :read)
+    {} (:host |two) (:guest |data/.) (:access :read-write)
+"#,
+        )
+        .expect("parse duplicate guest paths");
+        assert!(
+            parse_config(&value, Path::new("."))
+                .unwrap_err()
+                .contains("duplicates another normalized guest path")
+        );
     }
 
     #[test]
@@ -809,5 +1204,170 @@ mod tests {
 
         let encoded = encode_i64(i64::MIN);
         assert_eq!(decode_i64(&encoded, "argument"), Ok(i64::MIN));
+    }
+
+    #[test]
+    fn parses_file_backed_arguments_and_results_without_inline_ambiguity() {
+        let value = cirru_edn::parse(
+            r#"{}
+  :component |component.wasm
+  :entry |run
+  :arguments $ []
+  :arguments-file |/input/request.cirru
+  :result-file |/output/result.cirru
+  :max-response-bytes 4096
+  :preopens $ []
+"#,
+        )
+        .expect("parse file-backed config");
+        let config = parse_config(&value, Path::new("/project")).expect("decode file config");
+        assert_eq!(
+            config.arguments_file.as_deref(),
+            Some("/input/request.cirru")
+        );
+        assert_eq!(config.result_file.as_deref(), Some("/output/result.cirru"));
+
+        let ambiguous = cirru_edn::parse(
+            r#"{}
+  :component |component.wasm
+  :entry |run
+  :arguments $ [] |inline
+  :arguments-file |/input/request.cirru
+  :max-response-bytes 4096
+"#,
+        )
+        .expect("parse ambiguous config");
+        assert!(
+            parse_config(&ambiguous, Path::new("/project"))
+                .unwrap_err()
+                .contains("cannot be combined")
+        );
+    }
+
+    #[test]
+    fn resolves_only_authorized_guest_paths_with_required_access() {
+        let directory = tempdir().expect("create preopen root");
+        let input = directory.path().join("input.cirru");
+        fs::write(&input, "[]").expect("write input");
+        let read_only = HostPreopen {
+            host: directory.path().to_path_buf(),
+            guest: "/data".to_owned(),
+            writable: false,
+        };
+        open_preopen_file(std::slice::from_ref(&read_only), "/data/input.cirru", false)
+            .expect("open readable input");
+        assert_eq!(
+            open_preopen_file(std::slice::from_ref(&read_only), "/data/result.cirru", true)
+                .unwrap_err()
+                .exit_code(),
+            exit_code::CAPABILITY_DENIED
+        );
+        assert_eq!(
+            open_preopen_file(
+                std::slice::from_ref(&read_only),
+                "/other/input.cirru",
+                false
+            )
+            .unwrap_err()
+            .exit_code(),
+            exit_code::CAPABILITY_DENIED
+        );
+        assert_eq!(
+            open_preopen_file(std::slice::from_ref(&read_only), "/data/../secret", false)
+                .unwrap_err()
+                .exit_code(),
+            exit_code::CAPABILITY_DENIED
+        );
+
+        let writable = HostPreopen {
+            writable: true,
+            ..read_only
+        };
+        open_preopen_file(&[writable], "/data/result.cirru", true).expect("open writable output");
+        assert!(directory.path().join("result.cirru").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_preopen_symlink_escape_for_input_and_output() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().expect("create symlink test root");
+        let granted = directory.path().join("granted");
+        let outside = directory.path().join("outside");
+        fs::create_dir(&granted).expect("create granted directory");
+        fs::create_dir(&outside).expect("create outside directory");
+        fs::write(outside.join("input.cirru"), "[]").expect("write outside input");
+        symlink(&outside, granted.join("escape")).expect("create escape symlink");
+        let preopen = HostPreopen {
+            host: granted,
+            guest: "/data".to_owned(),
+            writable: true,
+        };
+        for (path, write) in [
+            ("/data/escape/input.cirru", false),
+            ("/data/escape/result.cirru", true),
+        ] {
+            let error = open_preopen_file(std::slice::from_ref(&preopen), path, write)
+                .expect_err("reject symlink escape");
+            assert_eq!(error.exit_code(), exit_code::CAPABILITY_DENIED);
+            assert!(error.message.contains("failed to open"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_result_handle_cannot_be_redirected_after_validation() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().expect("create retained handle root");
+        let outside = directory.path().join("outside.cirru");
+        let result = directory.path().join("result.cirru");
+        fs::write(&outside, "outside").expect("write outside sentinel");
+        let preopen = HostPreopen {
+            host: directory.path().to_path_buf(),
+            guest: "/data".to_owned(),
+            writable: true,
+        };
+        let mut file = open_preopen_file(&[preopen], "/data/result.cirru", true)
+            .expect("retain validated result handle");
+        fs::remove_file(&result).expect("unlink validated result path");
+        symlink(&outside, &result).expect("replace result path with symlink");
+
+        file.write_all(b"safe").expect("write retained file handle");
+
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "outside");
+        assert_eq!(fs::read_to_string(&result).unwrap(), "outside");
+    }
+
+    #[test]
+    fn maps_input_permission_failures_to_capability_denied() {
+        let error = input_file_error(
+            "read input".to_owned(),
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
+        assert_eq!(error.exit_code(), exit_code::CAPABILITY_DENIED);
+    }
+
+    #[test]
+    fn maps_closed_http_failures_to_stable_exit_codes() {
+        for (case, expected) in [
+            ("invalid-request", exit_code::INVALID_INPUT),
+            ("capability-denied", exit_code::CAPABILITY_DENIED),
+            ("transport", exit_code::TRANSPORT),
+            ("response-too-large", exit_code::RESPONSE_TOO_LARGE),
+            ("unsupported", exit_code::UNSUPPORTED),
+        ] {
+            assert_eq!(http_error_exit(case), expected, "case {case}");
+        }
+        let success =
+            cirru_edn::parse(":: :ok $ {} (:status 200)").expect("parse typed HTTP success");
+        assert_eq!(classify_result_exit(&success, &[]), exit_code::SUCCESS);
+        let untyped_error = cirru_edn::parse(":: :err $ :: :transport |detail")
+            .expect("parse untyped transport error");
+        assert_eq!(
+            classify_result_exit(&untyped_error, &[]),
+            exit_code::INTERNAL
+        );
     }
 }

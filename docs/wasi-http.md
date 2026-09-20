@@ -20,21 +20,32 @@ Component packaging 会保留 `calcit:wasi-http/client` 这一 package-qualified
 {}
   :component |/absolute/path/to/component.wasm
   :entry |call-host-http-request
-  :arguments $ []
-    {}
-      :body $ :: :empty
-      :headers $ []
-      :max-response-bytes 65536
-      :method $ :: :get
-      :url |https://api.example.com/items
+  :arguments-file |/input/request.cirru
+  :result-file |/output/result.cirru
   :max-response-bytes 1048576
   :allowed-origins $ []
     |https://api.example.com
   :preopens $ []
     {}
-      :host |/absolute/path/to/data
-      :guest |/data
+      :host |/absolute/path/to/input
+      :guest |/input
       :access :read
+    {}
+      :host |/absolute/path/to/output
+      :guest |/output
+      :access :read-write
+```
+
+`/input/request.cirru` 保存完整参数列表，而不是单个参数：
+
+```cirru
+[]
+  {}
+    :body $ :: :empty
+    :headers $ []
+    :max-response-bytes 65536
+    :method $ :: :get
+    :url |https://api.example.com/items
 ```
 
 然后运行同一个 `generate` 产物中的 host crate：
@@ -46,9 +57,16 @@ cargo run --manifest-path generated-component/rust/wasmtime-http-host/Cargo.toml
 
 生成目录完全由 `generate` 管理；capability 文件和业务封装归用户维护。`allowed-origins` 与
 `preopens` 缺省时都为空，未知字段会被拒绝；文件只接受明确的 `:read` / `:read-write` preopen。
-`arguments` 缺省为空列表。宿主从 Component function type 读取参数形状，在实例调用前严格解码，
-并把结果作为 Cirru EDN 写到 stdout；参数数量、字段、case、整数范围或 payload 不匹配都会带路径失败。
+`arguments` 缺省为空列表。`:arguments-file` 与非空 inline `:arguments` 互斥；文件路径是 guest path，
+必须落在 read 或 read-write preopen。`:result-file` 必须落在 read-write preopen，并写入与 stdout 相同的
+规范 Cirru EDN。两类路径都拒绝 `..`、未授权路径与 symlink 逃逸，不接受 host path 或 JSON fallback。
+宿主从 Component function type 读取参数形状，在实例调用前严格解码；参数数量、字段、case、整数范围或
+payload 不匹配都会带路径失败。参数文件上限为 4 MiB。
 零参数 Unit 入口保持兼容且不输出结果。
+
+生成 host 的退出码是稳定协议：成功为 `0`，配置/参数/`invalid-request` 为 `2`，文件或网络
+`capability-denied` 为 `3`，`transport` 为 `4`，`response-too-large` 为 `5`，`unsupported` 为 `6`，
+其他宿主或 Component 内部失败为 `1`。typed error 仍完整写入 stdout 和可选结果文件，退出码只用于编排。
 
 数据映射保持一套确定规则：Bool、String 与有限 Number 使用对应 Cirru EDN 标量；WIT 整数只接受
 范围内的无小数 Number；超出 Cirru EDN `f64` 无损范围的 64 位整数使用明确的
@@ -64,7 +82,7 @@ cargo run --manifest-path generated-component/rust/wasmtime-http-host/Cargo.toml
 
 ```toml
 [dependencies]
-calcit-bindgen = { version = "0.1.4", features = ["wasmtime-http"] }
+calcit-bindgen = { version = "0.1.7", features = ["wasmtime-http"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 wasmtime = { version = "=47.0.4", default-features = false, features = [
   "component-model",
