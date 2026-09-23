@@ -1,5 +1,5 @@
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use calcit_bindgen::package_wasi_command;
 use sha2::{Digest, Sha256};
@@ -99,6 +99,7 @@ fn runs_wasi_031_large_stdout_stream() {
           (import "wasi:cli/stdout@0.3.1" "[stream-new-0]write-via-stream" (func $new (result i64)))
           (import "wasi:cli/stdout@0.3.1" "[stream-write-0]write-via-stream" (func $write (param i32 i32 i32) (result i32)))
           (import "wasi:cli/stdout@0.3.1" "[stream-drop-writable-0]write-via-stream" (func $drop-writable (param i32)))
+          (import "wasi:cli/stdout@0.3.1" "[future-read-1]write-via-stream" (func $read-future (param i32 i32) (result i32)))
           (import "wasi:cli/stdout@0.3.1" "[future-drop-readable-1]write-via-stream" (func $drop-future (param i32)))
           (import "wasi:cli/stdout@0.3.1" "write-via-stream" (func $stdout (param i32) (result i32)))
           (import "[export]wasi:cli/run@0.3.1" "[task-return]run" (func $return-run (param i32)))
@@ -159,6 +160,21 @@ fn runs_wasi_031_large_stdout_stream() {
             local.get $writer
             call $drop-writable
             local.get $future
+            i32.const 64
+            call $read-future
+            i32.eqz
+            if
+            else
+              unreachable
+            end
+            i32.const 64
+            i32.load8_u
+            i32.eqz
+            if
+            else
+              unreachable
+            end
+            local.get $future
             call $drop-future
             i32.const 0
             call $return-run))
@@ -178,7 +194,7 @@ fn runs_wasi_031_large_stdout_stream() {
     let temporary = TempDir::new().expect("temporary output directory");
     let path = temporary.path().join("stdout.wasm");
     fs::write(&path, bytes).expect("write command Component");
-    let output = Command::new(wasmtime_cli)
+    let output = Command::new(&wasmtime_cli)
         .args([
             "run",
             "-S",
@@ -199,6 +215,30 @@ fn runs_wasi_031_large_stdout_stream() {
     );
     assert_eq!(output.stdout.len(), 1048576);
     assert!(output.stdout.starts_with(b"hello from stream\n"));
+
+    let mut closed_output = Command::new(wasmtime_cli)
+        .args([
+            "run",
+            "-S",
+            "p3",
+            "-W",
+            "component-model-more-async-builtins=y",
+            "-W",
+            "component-model-async-stackful=y",
+        ])
+        .arg(temporary.path().join("stdout.wasm"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn command with closed stdout");
+    drop(closed_output.stdout.take());
+    let closed = closed_output
+        .wait_with_output()
+        .expect("wait for closed stdout command");
+    assert!(
+        !closed.status.success(),
+        "closed stdout must not silently succeed"
+    );
 }
 
 #[test]
