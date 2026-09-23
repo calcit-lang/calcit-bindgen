@@ -84,7 +84,7 @@ pub(crate) fn package(
     })
 }
 
-/// Package a core module against the WASI v0.3.0 `wasi:cli/command` world.
+/// Package a core module against the WASI v0.3.1 `wasi:cli/command` world.
 pub fn package_wasi_command(core_module: &[u8]) -> Result<Vec<u8>, String> {
     validate_core_module(core_module)?;
     for payload in Parser::new(0).parse_all(core_module) {

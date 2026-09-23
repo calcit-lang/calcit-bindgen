@@ -157,7 +157,7 @@ stream/resource drop 等 lifecycle surface 及函数签名写入 ownership manif
 路线图：[calcit#544](https://github.com/calcit-lang/calcit/issues/544)
 
 WASI 0.3 command 的固定 WIT 与封装入口由 `package_wasi_command(core_module)` Rust API 提供。
-它校验并封装已实现 `wasi:cli/run@0.3.0` Canonical ABI 的 core module，明确拒绝
+它校验并封装已实现 `wasi:cli/run@0.3.1` Canonical ABI 的 core module，明确拒绝
 `wasi_snapshot_preview1` import；不会自动为 Calcit 代码生成参数、标准流等 lowering。
 Calcit 的 `calcit wasi --boundary component` 负责生成对应 core module 并调用本 API；
 当前 Calcit 端仅支持零参数纯计算入口。WIT 来源与校验摘要见
@@ -256,6 +256,13 @@ and traversal, and preserve stable exits for the closed HTTP failures.
 Zero-parameter Unit entries remain compatible.
 See the Chinese
 [WASI HTTP guide](docs/wasi-http.md) for integration details.
+
+The `package_wasi_command(core_module)` Rust API packages a core module that
+implements the official WASI v0.3.1 `wasi:cli/run@0.3.1` Canonical ABI. It
+rejects Preview 1 imports; Calcit owns the lowering for arguments and standard
+streams. The pinned WIT provenance and hashes are documented in
+[`src/wasi_wit/README.md`](src/wasi_wit/README.md). The command Component is
+smoke-tested with Wasmtime 49.0.0, including a real host import.
 
 The Rust backend accepts only `native + sync + edn-buffer-v1`. It emits
 namespace-qualified Rust names, a typed service trait, codecs for the strict
