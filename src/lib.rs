@@ -19,7 +19,7 @@ pub mod wasmtime_host;
 pub mod wasmtime_http;
 
 pub use compatibility::{Change, ChangeKind, CompatibilityReport, compare, compare_component};
-pub use component::{LifecycleExport, LifecycleImport, LifecycleSurface};
+pub use component::{LifecycleExport, LifecycleImport, LifecycleSurface, package_wasi_command};
 pub use generate::{
     ArtifactDigest, CALCIT_BINDINGS_FILE, COMPONENT_FILE, CheckIssue, CheckIssueKind, CheckReport,
     ContractKind, GenerationBackend, INTERFACE_FILE, MANIFEST_FILE, Manifest, RUST_BINDINGS_FILE,

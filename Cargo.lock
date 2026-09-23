@@ -148,6 +148,7 @@ dependencies = [
  "md5",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "wasm-encoder 0.258.0",

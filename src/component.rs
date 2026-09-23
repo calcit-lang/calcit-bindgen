@@ -84,6 +84,60 @@ pub(crate) fn package(
     })
 }
 
+/// Package a core module against the WASI v0.3.0 `wasi:cli/command` world.
+pub fn package_wasi_command(core_module: &[u8]) -> Result<Vec<u8>, String> {
+    validate_core_module(core_module)?;
+    for payload in Parser::new(0).parse_all(core_module) {
+        if let Payload::ImportSection(reader) =
+            payload.map_err(|error| format!("invalid core WebAssembly module: {error}"))?
+        {
+            for import in reader.into_imports() {
+                let import =
+                    import.map_err(|error| format!("invalid core WebAssembly import: {error}"))?;
+                if import.module == "wasi_snapshot_preview1" {
+                    return Err(format!(
+                        "E_WASI_COMMAND_PREVIEW1_IMPORT: `{}` still imports WASI Preview 1; emit WASI 0.3 Canonical ABI imports instead",
+                        import.name
+                    ));
+                }
+            }
+        }
+    }
+    let mut resolve = Resolve::default();
+    let mut cli_package = None;
+    for (name, wit) in [
+        ("clocks.wit", include_str!("wasi_wit/clocks.wit")),
+        ("filesystem.wit", include_str!("wasi_wit/filesystem.wit")),
+        ("sockets.wit", include_str!("wasi_wit/sockets.wit")),
+        ("random.wit", include_str!("wasi_wit/random.wit")),
+        ("cli.wit", include_str!("wasi_wit/cli.wit")),
+    ] {
+        let package = resolve
+            .push_str(name, wit)
+            .map_err(|error| format!("invalid pinned WASI 0.3 WIT package {name}: {error:#}"))?;
+        if name == "cli.wit" {
+            cli_package = Some(package);
+        }
+    }
+    let world = resolve
+        .select_world(
+            &[cli_package.expect("pinned CLI WIT package is included")],
+            Some("command"),
+        )
+        .map_err(|error| format!("failed to select WASI 0.3 command world: {error:#}"))?;
+    let mut module = core_module.to_vec();
+    embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
+        .map_err(|error| format!("failed to embed WASI command WIT metadata: {error:#}"))?;
+    let mut encoder = ComponentEncoder::default();
+    encoder.module(&module).map_err(|error| {
+        format!("core module does not implement the WASI 0.3 command Canonical ABI: {error:#}")
+    })?;
+    encoder.validate(true);
+    encoder.encode().map_err(|error| {
+        format!("core module does not implement the WASI 0.3 command Canonical ABI: {error:#}")
+    })
+}
+
 fn inspect_lifecycle_surface(bytes: &[u8]) -> Result<LifecycleSurface, String> {
     let mut types = Vec::<FuncType>::new();
     let mut function_types = Vec::<u32>::new();
@@ -245,9 +299,7 @@ fn validate_core_module(bytes: &[u8]) -> Result<(), String> {
             encoding: Encoding::Component,
             ..
         } => {
-            return Err(
-                "--core-module expects a core WebAssembly module, not a Component".to_owned(),
-            );
+            return Err("expected a core WebAssembly module, not a Component".to_owned());
         }
         _ => return Err("core WebAssembly input has no module header".to_owned()),
     }
