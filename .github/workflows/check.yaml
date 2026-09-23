@@ -31,6 +31,15 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: Run WASI 0.3 command Component with Wasmtime 47.0.4
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          curl --fail --location --silent --show-error \
+            'https://github.com/bytecodealliance/wasmtime/releases/download/v47.0.4/wasmtime-v47.0.4-x86_64-linux.tar.xz' \
+            --output "$RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux.tar.xz"
+          tar -xf "$RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux.tar.xz" -C "$RUNNER_TEMP"
+          WASMTIME_47_CLI="$RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux/wasmtime" \
+            cargo test --test wasi_command
       - name: Check out the matching Calcit release
         if: matrix.os == 'ubuntu-latest'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
