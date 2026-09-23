@@ -92,6 +92,116 @@ fn runs_wasi_031_host_import() {
 }
 
 #[test]
+fn runs_wasi_031_large_stdout_stream() {
+    let core = wat::parse_str(
+        r#"
+        (module
+          (import "wasi:cli/stdout@0.3.1" "[stream-new-0]write-via-stream" (func $new (result i64)))
+          (import "wasi:cli/stdout@0.3.1" "[stream-write-0]write-via-stream" (func $write (param i32 i32 i32) (result i32)))
+          (import "wasi:cli/stdout@0.3.1" "[stream-drop-writable-0]write-via-stream" (func $drop-writable (param i32)))
+          (import "wasi:cli/stdout@0.3.1" "[future-drop-readable-1]write-via-stream" (func $drop-future (param i32)))
+          (import "wasi:cli/stdout@0.3.1" "write-via-stream" (func $stdout (param i32) (result i32)))
+          (import "[export]wasi:cli/run@0.3.1" "[task-return]run" (func $return-run (param i32)))
+          (memory (export "memory") 32)
+          (data (i32.const 16) "hello from stream\0a")
+          (func (export "[async-lift-stackful]wasi:cli/run@0.3.1#run")
+            (local $pair i64)
+            (local $written i32)
+            (local $future i32)
+            (local $writer i32)
+            (local $offset i32)
+            (local $remaining i32)
+            call $new
+            local.set $pair
+            local.get $pair
+            i32.wrap_i64
+            call $stdout
+            local.set $future
+            local.get $pair
+            i64.const 32
+            i64.shr_u
+            i32.wrap_i64
+            local.set $writer
+            i32.const 16
+            local.set $offset
+            i32.const 1048576
+            local.set $remaining
+            block $finished
+              loop $writing
+                local.get $remaining
+                i32.eqz
+                br_if $finished
+                local.get $writer
+                local.get $offset
+                local.get $remaining
+                call $write
+                local.tee $written
+                i32.const 15
+                i32.and
+                if unreachable end
+                local.get $written
+                i32.const 4
+                i32.shr_u
+                local.tee $written
+                i32.eqz
+                if unreachable end
+                local.get $offset
+                local.get $written
+                i32.add
+                local.set $offset
+                local.get $remaining
+                local.get $written
+                i32.sub
+                local.set $remaining
+                br $writing
+              end
+            end
+            local.get $writer
+            call $drop-writable
+            local.get $future
+            call $drop-future
+            i32.const 0
+            call $return-run))
+        "#,
+    )
+    .expect("compile stdout stream fixture");
+    let bytes = package_wasi_command(&core).expect("package stdout stream command");
+    let mut config = Config::new();
+    config.wasm_component_model_async(true);
+    config.wasm_component_model_async_stackful(true);
+    config.wasm_component_model_more_async_builtins(true);
+    let engine = Engine::new(&config).expect("create Wasmtime engine");
+    Component::new(&engine, &bytes).expect("validate stdout stream Component");
+    let Some(wasmtime_cli) = std::env::var_os("WASMTIME_49_CLI") else {
+        return;
+    };
+    let temporary = TempDir::new().expect("temporary output directory");
+    let path = temporary.path().join("stdout.wasm");
+    fs::write(&path, bytes).expect("write command Component");
+    let output = Command::new(wasmtime_cli)
+        .args([
+            "run",
+            "-S",
+            "p3",
+            "-W",
+            "component-model-more-async-builtins=y",
+            "-W",
+            "component-model-async-stackful=y",
+        ])
+        .arg(path)
+        .output()
+        .expect("run stdout command with Wasmtime 49");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout.len(), 1048576);
+    assert!(output.stdout.starts_with(b"hello from stream\n"));
+}
+
+#[test]
 fn rejects_wasi_030_run_export_for_031_world() {
     let core = wat::parse_str(
         r#"(module (memory (export "memory") 1) (func (export "wasi:cli/run@0.3.0#run") (result i32) i32.const 0))"#,
