@@ -31,15 +31,15 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
-      - name: Run WASI 0.3 command Component with Wasmtime 47.0.4
+      - name: Run WASI 0.3.1 command Component with Wasmtime 49.0.0
         if: matrix.os == 'ubuntu-latest'
         run: |
           curl --fail --location --silent --show-error \
-            'https://github.com/bytecodealliance/wasmtime/releases/download/v47.0.4/wasmtime-v47.0.4-x86_64-linux.tar.xz' \
-            --output "$RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux.tar.xz"
-          echo "446e8641ba372333670ba0373d5d3083e5cf0dd001b66088afbb3983db0f768f  $RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux.tar.xz" | sha256sum -c -
-          tar -xf "$RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux.tar.xz" -C "$RUNNER_TEMP"
-          WASMTIME_47_CLI="$RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux/wasmtime" \
+            'https://github.com/bytecodealliance/wasmtime/releases/download/v49.0.0/wasmtime-v49.0.0-x86_64-linux.tar.xz' \
+            --output "$RUNNER_TEMP/wasmtime-v49.0.0-x86_64-linux.tar.xz"
+          echo "a956c279ac6e80109369a285db30fc46f68239fa1bbeb03ccfa8e913bbca85fc  $RUNNER_TEMP/wasmtime-v49.0.0-x86_64-linux.tar.xz" | sha256sum -c -
+          tar -xf "$RUNNER_TEMP/wasmtime-v49.0.0-x86_64-linux.tar.xz" -C "$RUNNER_TEMP"
+          WASMTIME_49_CLI="$RUNNER_TEMP/wasmtime-v49.0.0-x86_64-linux/wasmtime" \
             cargo test --test wasi_command
       - name: Check out the matching Calcit release
         if: matrix.os == 'ubuntu-latest'

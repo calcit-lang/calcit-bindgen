@@ -8,7 +8,7 @@ use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
 
 #[test]
-fn packages_wasi_03_command_run_export() {
+fn packages_wasi_031_command_run_export() {
     let mut config = Config::new();
     config.wasm_component_model_async(true);
     config.wasm_component_model_async_stackful(true);
@@ -20,7 +20,7 @@ fn packages_wasi_03_command_run_export() {
             r#"
         (module
           (memory (export "memory") 1)
-          (func (export "wasi:cli/run@0.3.0#run") (result i32)
+          (func (export "wasi:cli/run@0.3.1#run") (result i32)
             i32.const {result_tag}))
         "#,
         ))
@@ -36,17 +36,17 @@ fn packages_wasi_03_command_run_export() {
             component
                 .component_type()
                 .exports(&engine)
-                .any(|(name, _)| name == "wasi:cli/run@0.3.0")
+                .any(|(name, _)| name == "wasi:cli/run@0.3.1")
         );
 
-        if let Some(wasmtime_cli) = std::env::var_os("WASMTIME_47_CLI") {
+        if let Some(wasmtime_cli) = std::env::var_os("WASMTIME_49_CLI") {
             let path = temporary.path().join(format!("command-{result_tag}.wasm"));
             fs::write(&path, &bytes).expect("write command Component");
             let output = Command::new(wasmtime_cli)
                 .args(["run", "-S", "p3"])
                 .arg(path)
                 .output()
-                .expect("run WASI 0.3 command with Wasmtime 47");
+                .expect("run WASI 0.3.1 command with Wasmtime 49");
             assert_eq!(
                 output.status.code(),
                 Some(expected_exit),
@@ -58,13 +58,57 @@ fn packages_wasi_03_command_run_export() {
 }
 
 #[test]
+fn runs_wasi_031_host_import() {
+    let Some(wasmtime_cli) = std::env::var_os("WASMTIME_49_CLI") else {
+        return;
+    };
+    let core = wat::parse_str(
+        r#"
+        (module
+          (import "wasi:cli/exit@0.3.1" "exit-with-code" (func $exit (param i32)))
+          (memory (export "memory") 1)
+          (func (export "wasi:cli/run@0.3.1#run") (result i32)
+            i32.const 7
+            call $exit
+            i32.const 0))
+        "#,
+    )
+    .expect("compile WASI host import fixture");
+    let bytes = package_wasi_command(&core).expect("package WASI host import");
+    let temporary = TempDir::new().expect("temporary output directory");
+    let path = temporary.path().join("host-import.wasm");
+    fs::write(&path, bytes).expect("write command Component");
+    let output = Command::new(wasmtime_cli)
+        .args(["run", "-S", "p3"])
+        .arg(path)
+        .output()
+        .expect("run WASI 0.3.1 host import with Wasmtime 49");
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "unexpected Wasmtime result: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn rejects_wasi_030_run_export_for_031_world() {
+    let core = wat::parse_str(
+        r#"(module (memory (export "memory") 1) (func (export "wasi:cli/run@0.3.0#run") (result i32) i32.const 0))"#,
+    )
+    .expect("compile old command core fixture");
+    let error = package_wasi_command(&core).expect_err("old command export must not package");
+    assert!(error.contains("wasi:cli/run@0.3.1"), "{error}");
+}
+
+#[test]
 fn rejects_preview1_imports_in_wasi_command() {
     let core = wat::parse_str(
         r#"
         (module
           (import "wasi_snapshot_preview1" "fd_write" (func (param i32 i32 i32 i32) (result i32)))
           (memory (export "memory") 1)
-          (func (export "wasi:cli/run@0.3.0#run") (result i32)
+          (func (export "wasi:cli/run@0.3.1#run") (result i32)
             i32.const 0))
         "#,
     )
@@ -80,7 +124,7 @@ fn rejects_preview1_imports_in_wasi_command() {
 #[test]
 fn rejects_component_input_without_cli_specific_error() {
     let core = wat::parse_str(
-        r#"(module (memory (export "memory") 1) (func (export "wasi:cli/run@0.3.0#run") (result i32) i32.const 0))"#,
+        r#"(module (memory (export "memory") 1) (func (export "wasi:cli/run@0.3.1#run") (result i32) i32.const 0))"#,
     )
     .expect("compile command core fixture");
     let component = package_wasi_command(&core).expect("package command");
