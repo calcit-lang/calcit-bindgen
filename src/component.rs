@@ -299,9 +299,7 @@ fn validate_core_module(bytes: &[u8]) -> Result<(), String> {
             encoding: Encoding::Component,
             ..
         } => {
-            return Err(
-                "--core-module expects a core WebAssembly module, not a Component".to_owned(),
-            );
+            return Err("expected a core WebAssembly module, not a Component".to_owned());
         }
         _ => return Err("core WebAssembly input has no module header".to_owned()),
     }

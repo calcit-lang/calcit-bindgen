@@ -2,6 +2,7 @@ use std::fs;
 use std::process::Command;
 
 use calcit_bindgen::package_wasi_command;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
@@ -74,4 +75,58 @@ fn rejects_preview1_imports_in_wasi_command() {
         "{error}"
     );
     assert!(error.contains("fd_write"), "{error}");
+}
+
+#[test]
+fn rejects_component_input_without_cli_specific_error() {
+    let core = wat::parse_str(
+        r#"(module (memory (export "memory") 1) (func (export "wasi:cli/run@0.3.0#run") (result i32) i32.const 0))"#,
+    )
+    .expect("compile command core fixture");
+    let component = package_wasi_command(&core).expect("package command");
+    let error = package_wasi_command(&component).expect_err("Component input must be rejected");
+    assert!(
+        error.contains("expected a core WebAssembly module"),
+        "{error}"
+    );
+    assert!(!error.contains("--core-module"), "{error}");
+}
+
+#[test]
+fn pinned_wasi_wit_hashes_match_documentation() {
+    let readme = include_str!("../src/wasi_wit/README.md");
+    for (name, content) in [
+        (
+            "cli.wit",
+            include_bytes!("../src/wasi_wit/cli.wit").as_slice(),
+        ),
+        (
+            "clocks.wit",
+            include_bytes!("../src/wasi_wit/clocks.wit").as_slice(),
+        ),
+        (
+            "filesystem.wit",
+            include_bytes!("../src/wasi_wit/filesystem.wit").as_slice(),
+        ),
+        (
+            "random.wit",
+            include_bytes!("../src/wasi_wit/random.wit").as_slice(),
+        ),
+        (
+            "sockets.wit",
+            include_bytes!("../src/wasi_wit/sockets.wit").as_slice(),
+        ),
+    ] {
+        let row_prefix = format!("| `{name}` | `");
+        let row = readme
+            .lines()
+            .find(|line| line.starts_with(&row_prefix))
+            .unwrap_or_else(|| panic!("missing documented SHA-256 for {name}"));
+        let documented = row
+            .strip_prefix(&row_prefix)
+            .and_then(|suffix| suffix.split('`').next())
+            .expect("SHA-256 table cell");
+        let actual = format!("{:x}", Sha256::digest(content));
+        assert_eq!(actual, documented, "WIT hash drifted for {name}");
+    }
 }

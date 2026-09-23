@@ -45,6 +45,7 @@ wit-component = "0.258"
 wit-parser = "0.258"
 
 [dev-dependencies]
+sha2 = "0.10"
 calcit_native_ffi = "0.1.3"
 libloading = "0.8"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread"] }

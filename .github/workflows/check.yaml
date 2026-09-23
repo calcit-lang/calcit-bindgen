@@ -37,6 +37,7 @@ jobs:
           curl --fail --location --silent --show-error \
             'https://github.com/bytecodealliance/wasmtime/releases/download/v47.0.4/wasmtime-v47.0.4-x86_64-linux.tar.xz' \
             --output "$RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux.tar.xz"
+          echo "446e8641ba372333670ba0373d5d3083e5cf0dd001b66088afbb3983db0f768f  $RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux.tar.xz" | sha256sum -c -
           tar -xf "$RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux.tar.xz" -C "$RUNNER_TEMP"
           WASMTIME_47_CLI="$RUNNER_TEMP/wasmtime-v47.0.4-x86_64-linux/wasmtime" \
             cargo test --test wasi_command
