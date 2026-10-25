@@ -11,7 +11,7 @@ use cap_std::fs::{Dir, File, OpenOptions};
 use cirru_edn::Edn;
 use wasmtime::component::{Component, Linker, ResourceTable, Type, Val};
 use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use crate::wasmtime_http::{self, WasiHttpConfig};
 
@@ -234,12 +234,12 @@ async fn run(mut config: HostConfig) -> Result<i32, HostFailure> {
     // Reserve stdout for the host's machine-readable Cirru EDN result.
     wasi.inherit_stderr();
     for preopen in &config.preopens {
-        let (dir_perms, file_perms) = if preopen.writable {
-            (DirPerms::all(), FilePerms::all())
+        let perms = if preopen.writable {
+            FsPerms::ReadWrite
         } else {
-            (DirPerms::READ, FilePerms::READ)
+            FsPerms::ReadOnly
         };
-        wasi.preopened_dir(&preopen.host, &preopen.guest, dir_perms, file_perms)
+        wasi.preopened_dir(&preopen.host, &preopen.guest, perms)
             .map_err(|error| {
                 HostFailure::capability_denied(format!(
                     "failed to grant preopen {} as {:?}: {error}",

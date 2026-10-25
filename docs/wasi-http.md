@@ -84,7 +84,7 @@ payload 不匹配都会带路径失败。参数文件上限为 4 MiB。
 [dependencies]
 calcit-bindgen = { version = "0.1.7", features = ["wasmtime-http"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
-wasmtime = { version = "=47.0.4", default-features = false, features = [
+wasmtime = { version = "=48.0.7", default-features = false, features = [
   "component-model",
   "component-model-async",
   "cranelift",
