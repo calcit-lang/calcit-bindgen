@@ -78,13 +78,13 @@ payload 不匹配都会带路径失败。参数文件上限为 4 MiB。
 
 ## 自定义宿主依赖
 
-宿主 crate 使用与生成器一致的 Wasmtime 47，并显式启用 HTTP adapter：
+宿主 crate 使用与生成器一致的 Wasmtime 48，并显式启用 HTTP adapter：
 
 ```toml
 [dependencies]
-calcit-bindgen = { version = "0.1.7", features = ["wasmtime-http"] }
+calcit-bindgen = { version = "0.1.10", features = ["wasmtime-http"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
-wasmtime = { version = "=47.0.4", default-features = false, features = [
+wasmtime = { version = "=48.0.7", default-features = false, features = [
   "component-model",
   "component-model-async",
   "cranelift",
@@ -123,7 +123,7 @@ calcit_wasi_http::add_to_linker(&mut linker, http)?;
   `unsupported`，而不是让调用悬空或伪造成功；
 - 空响应返回 empty，不用伪造的成功响应掩盖错误。
 
-实现复用 Wasmtime 47 稳定的 WASI 0.2 `wasi:http/outgoing-handler` 生产传输，而 Calcit-facing
+实现复用 Wasmtime 48 稳定的 WASI 0.2 `wasi:http/outgoing-handler` 生产传输，而 Calcit-facing
 Component contract 保持 WASI 0.3 原生 async。这样可以先支持简单业务的真实 HTTP 调用，同时
 避免依赖 Wasmtime 当前仍标记为 experimental 的 WASI 0.3 HTTP host 模块。等该模块稳定后，
 可以替换 adapter 内部实现，不改变 Calcit contract 或命令入口。

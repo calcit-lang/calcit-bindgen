@@ -9,9 +9,7 @@ use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method, Uri};
 use http_body_util::{BodyExt, Full};
 use wasmtime::component::{ComponentType, Lift, Linker, Lower};
-use wasmtime_wasi_http::DEFAULT_FORBIDDEN_HEADERS;
-use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
-use wasmtime_wasi_http::p2::types::OutgoingRequestConfig;
+use wasmtime_wasi_http::{DEFAULT_FORBIDDEN_HEADERS, Error as WasiHttpError, RequestOptions};
 
 const CLIENT_INSTANCE: &str = "calcit:wasi-http/client";
 const REQUEST_FUNCTION: &str = "request";
@@ -199,8 +197,6 @@ pub async fn send(
             request_origin(&uri).expect("validated absolute URI")
         )));
     }
-    let use_tls = scheme == "https";
-
     let mut builder = http::Request::builder()
         .method(method(request.method))
         .uri(uri);
@@ -228,25 +224,28 @@ pub async fn send(
         HttpBody::Bytes(value) => Bytes::from(value),
     };
     let body = Full::new(body)
-        .map_err(|never: Infallible| match never {})
+        .map_err(|never: Infallible| -> WasiHttpError { match never {} })
         .boxed_unsync();
-    let request = builder
+    let mut request = builder
         .body(body)
         .map_err(|error| HttpError::InvalidRequest(format!("invalid HTTP request: {error}")))?;
-    let transport = OutgoingRequestConfig {
-        use_tls,
-        connect_timeout: config.connect_timeout,
-        first_byte_timeout: config.first_byte_timeout,
-        between_bytes_timeout: config.between_bytes_timeout,
+    // Wasmtime 48's default sender no longer adds Host, and guests cannot set it.
+    let host = request
+        .uri()
+        .authority()
+        .and_then(|authority| HeaderValue::from_str(authority.as_str()).ok())
+        .ok_or_else(|| HttpError::InvalidRequest("HTTP URL has no valid host".to_owned()))?;
+    request.headers_mut().insert(http::header::HOST, host);
+    let options = RequestOptions {
+        connect_timeout: Some(config.connect_timeout),
+        first_byte_timeout: Some(config.first_byte_timeout),
+        between_bytes_timeout: Some(config.between_bytes_timeout),
     };
-    let response = wasmtime_wasi_http::p2::default_send_request_handler(request, transport)
+    let (resp, connection) = wasmtime_wasi_http::default_send_request(request, Some(options))
         .await
         .map_err(map_transport_error)?;
-    let wasmtime_wasi_http::p2::types::IncomingResponse {
-        resp,
-        worker: _worker,
-        ..
-    } = response;
+    // Drive the hyper connection while the response body is read.
+    let _worker = AbortOnDrop(tokio::spawn(connection));
     let (parts, mut body) = resp.into_parts();
     let mut bytes = Vec::new();
     while let Some(frame) = tokio::time::timeout(config.between_bytes_timeout, body.frame())
@@ -287,6 +286,14 @@ pub async fn send(
     })
 }
 
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 fn request_origin(uri: &Uri) -> Option<String> {
     Some(format!("{}://{}", uri.scheme_str()?, uri.authority()?))
 }
@@ -303,7 +310,7 @@ fn method(value: HttpMethod) -> Method {
     }
 }
 
-fn map_transport_error(error: ErrorCode) -> HttpError {
+fn map_transport_error(error: WasiHttpError) -> HttpError {
     HttpError::Transport(format!("{error:?}"))
 }
 
