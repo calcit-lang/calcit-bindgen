@@ -84,7 +84,7 @@ Cirru EDN 数据，不接受 host path、越界或 JSON fallback；生成 host �
 [WASI HTTP 文档](docs/wasi-http.md)。
 Component v3 的 `invocation` 会被显式校验；`sync` 生成普通 `func`，`async` 生成 WASI 0.3 原生
 `async func`。打包仍要求 core module 实现对应的 Canonical ABI，缺少 async builtin wiring 时会在写入产物前失败。
-仓库内 Wasmtime 47 验收会实际调用 async export、typed Result success/error，并让 concurrent async host import
+仓库内 Wasmtime 48 验收会实际调用 async export、typed Result success/error，并让 concurrent async host import
 至少挂起一次后通过 waitable 生命周期恢复。CI 还固定使用 Calcit 0.18.0 生成的真实 core，分别验证主动取消与
 callback 竞态、exactly-once completion、同步 post-return 内存复用，以及 stream backpressure、cancel-read 和 drop。
 Calcit core 负责生成并测试这些 wiring；bindgen 只消费公开 contract、验证打包结果，不复制 lowering。
@@ -233,7 +233,7 @@ Component v3 `invocation` is validated explicitly. `sync` emits ordinary
 `func` declarations while `async` emits native WASI 0.3 `async func`
 declarations. Packaging still requires the core module to implement the matching
 Canonical ABI and fails before writing artifacts when async builtin wiring is missing.
-The in-repository Wasmtime 47 acceptance invokes an async export, typed Result
+The in-repository Wasmtime 48 acceptance invokes an async export, typed Result
 success/error, and a concurrent async host import that suspends at least once
 before resuming through the waitable lifecycle. CI also packages real core
 modules produced by Calcit 0.18.0 and verifies active cancellation and callback
@@ -246,7 +246,7 @@ When the contract contains the exact closed `calcit:wasi-http/client.request`
 interface, generation also owns `rust/wasmtime_http_adapter.rs` and a runnable
 `rust/wasmtime-http-host/` crate. Both stay under the existing `generate`,
 `check`, and manifest lifecycle, without another command. The adapter is
-backed by the stable WASI 0.2 HTTP transport in Wasmtime 47, denies all origins
+backed by the stable WASI 0.2 HTTP transport in Wasmtime 48, denies all origins
 and preopened directories by default, and combines the host response limit with
 the explicit per-request limit. Its existing Cirru EDN configuration also
 decodes `arguments` strictly from the Component function type and writes typed

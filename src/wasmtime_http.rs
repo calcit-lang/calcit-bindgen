@@ -226,9 +226,16 @@ pub async fn send(
     let body = Full::new(body)
         .map_err(|never: Infallible| -> WasiHttpError { match never {} })
         .boxed_unsync();
-    let request = builder
+    let mut request = builder
         .body(body)
         .map_err(|error| HttpError::InvalidRequest(format!("invalid HTTP request: {error}")))?;
+    // Wasmtime 48's default sender no longer adds Host, and guests cannot set it.
+    let host = request
+        .uri()
+        .authority()
+        .and_then(|authority| HeaderValue::from_str(authority.as_str()).ok())
+        .ok_or_else(|| HttpError::InvalidRequest("HTTP URL has no valid host".to_owned()))?;
+    request.headers_mut().insert(http::header::HOST, host);
     let options = RequestOptions {
         connect_timeout: Some(config.connect_timeout),
         first_byte_timeout: Some(config.first_byte_timeout),

@@ -58,9 +58,29 @@ async fn serve_once(body: &'static [u8], content_type: &'static str) -> String {
             .await
             .expect("read HTTP request line");
         assert_eq!(request_line, "GET /items HTTP/1.1\r\n");
+        let mut has_host = false;
+        loop {
+            let mut line = String::new();
+            reader
+                .read_line(&mut line)
+                .await
+                .expect("read HTTP request header");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+            has_host |= line
+                .trim_end()
+                .eq_ignore_ascii_case(&format!("host: {address}"));
+        }
+        // Strict HTTP/1.1 servers reject requests without Host.
+        let status = if has_host {
+            "200 OK"
+        } else {
+            "400 Bad Request"
+        };
         let mut stream = reader.into_inner();
         let head = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            "HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
             body.len()
         );
         stream
