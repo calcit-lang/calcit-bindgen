@@ -163,6 +163,13 @@ Calcit 的 `calcit wasi --boundary component` 负责生成对应 core module 并
 当前 Calcit 端仅支持零参数纯计算入口。WIT 来源与校验摘要见
 [`src/wasi_wit/README.md`](src/wasi_wit/README.md)。
 
+WASI 0.2 HTTP proxy 的固定 WIT 与封装入口由 `package_wasi_http_proxy(core_module)` Rust API
+提供：它针对官方 WASI v0.2.12 `wasi:http/proxy` world 校验并封装已实现
+`wasi:http/incoming-handler@0.2.12` Canonical ABI 的 core module，明确拒绝
+`wasi_snapshot_preview1` import，并可通过 `wasmtime serve` 直接运行（复用实例化次数的
+HTTP GET 回归在 CI 以 Wasmtime 49 实测）。WIT 来源与校验摘要见
+[`src/wasi_http_wit/README.md`](src/wasi_http_wit/README.md)。
+
 ## English
 
 This crate is independent of Calcit core and strictly consumes versioned
@@ -263,6 +270,14 @@ rejects Preview 1 imports; Calcit owns the lowering for arguments and standard
 streams. The pinned WIT provenance and hashes are documented in
 [`src/wasi_wit/README.md`](src/wasi_wit/README.md). The command Component is
 smoke-tested with Wasmtime 49.0.0, including a real host import.
+
+The `package_wasi_http_proxy(core_module)` Rust API packages a core module that
+implements the official WASI v0.2.12 `wasi:http/incoming-handler@0.2.12`
+Canonical ABI against the `wasi:http/proxy` world while rejecting Preview 1
+imports. Pinned WIT provenance and hashes are documented in
+[`src/wasi_http_wit/README.md`](src/wasi_http_wit/README.md), and the packaged
+Component is smoke-tested in CI with `wasmtime serve` (Wasmtime 49.0.0) across
+repeated HTTP requests with instance reuse enabled.
 
 The Rust backend accepts only `native + sync + edn-buffer-v1`. It emits
 namespace-qualified Rust names, a typed service trait, codecs for the strict
