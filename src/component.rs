@@ -208,6 +208,32 @@ pub fn package_wasi_http_proxy(core_module: &[u8]) -> Result<Vec<u8>, String> {
     )
 }
 
+/// Package a core module against the `calcit:db/http-service@0.1.0` world
+/// (`wasi:http/proxy@0.2.12` plus `calcit:db/sql@0.1.0` and `calcit:db/kv@0.1.0`).
+pub fn package_wasi_http_service(core_module: &[u8]) -> Result<Vec<u8>, String> {
+    package_wasi_world(
+        core_module,
+        "E_WASI_HTTP_PREVIEW1_IMPORT",
+        "emit WASI 0.2 Canonical ABI imports instead",
+        &[
+            ("io.wit", include_str!("wasi_http_wit/io.wit")),
+            ("clocks.wit", include_str!("wasi_http_wit/clocks.wit")),
+            (
+                "filesystem.wit",
+                include_str!("wasi_http_wit/filesystem.wit"),
+            ),
+            ("sockets.wit", include_str!("wasi_http_wit/sockets.wit")),
+            ("random.wit", include_str!("wasi_http_wit/random.wit")),
+            ("cli.wit", include_str!("wasi_http_wit/cli.wit")),
+            ("http.wit", include_str!("wasi_http_wit/http.wit")),
+            ("db.wit", include_str!("wasi_db_wit/db.wit")),
+        ],
+        "db.wit",
+        "http-service",
+        "WASI 0.2 HTTP + DB service",
+    )
+}
+
 fn inspect_lifecycle_surface(bytes: &[u8]) -> Result<LifecycleSurface, String> {
     let mut types = Vec::<FuncType>::new();
     let mut function_types = Vec::<u32>::new();

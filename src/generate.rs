@@ -13,10 +13,13 @@ use crate::{
 pub const INTERFACE_FILE: &str = "interface.json";
 pub const RUST_BINDINGS_FILE: &str = "rust/bindings.rs";
 pub const CALCIT_BINDINGS_FILE: &str = "calcit/bindings.cirru";
+pub const CALCIT_DB_BINDINGS_FILE: &str = "calcit/db_bindings.cirru";
 pub const TYPESCRIPT_BINDINGS_FILE: &str = "typescript/bindings.d.ts";
 pub const WIT_BINDINGS_FILE: &str = "wit/interface.wit";
+pub const WIT_DB_FILE: &str = "wit/db.wit";
 pub const COMPONENT_FILE: &str = "component/component.wasm";
 pub const WASMTIME_HTTP_ADAPTER_FILE: &str = "rust/wasmtime_http_adapter.rs";
+pub const WASMTIME_DB_ADAPTER_FILE: &str = "rust/wasmtime_db_adapter.rs";
 pub const WASMTIME_HTTP_HOST_CARGO_FILE: &str = "rust/wasmtime-http-host/Cargo.toml";
 pub const WASMTIME_HTTP_HOST_MAIN_FILE: &str = "rust/wasmtime-http-host/src/main.rs";
 pub const WASMTIME_HTTP_HOST_README_FILE: &str = "rust/wasmtime-http-host/README.md";
@@ -447,6 +450,17 @@ fn render_component(
         for (path, content) in crate::host_scaffold::render() {
             files.insert(path.to_owned(), content.into_bytes());
         }
+    }
+    if let Some(db) = crate::db_adapter::render(&canonical)? {
+        files.insert(WIT_DB_FILE.to_owned(), db.wit.into_bytes());
+        files.insert(
+            CALCIT_DB_BINDINGS_FILE.to_owned(),
+            db.calcit_bindings.into_bytes(),
+        );
+        files.insert(
+            WASMTIME_DB_ADAPTER_FILE.to_owned(),
+            db.rust_adapter.into_bytes(),
+        );
     }
     let manifest = Manifest {
         schema_version: MANIFEST_SCHEMA_VERSION,

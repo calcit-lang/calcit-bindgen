@@ -202,8 +202,32 @@ pub(crate) fn component_import_aliases(
                 };
                 exact_component_name(namespace, &path)?;
                 exact_component_name(package, &path)?;
-                exact_component_name(interface, &path)?;
-                exact_component_name(&format!("{namespace}-{package}-{interface}"), &path)?
+                let (interface_name, version_suffix) = match interface.split_once('@') {
+                    Some((name, version)) => {
+                        let mut parts = version.split('.');
+                        let valid_version = matches!(
+                            (parts.next(), parts.next(), parts.next(), parts.next()),
+                            (Some(major), Some(minor), Some(patch), None)
+                                if !major.is_empty()
+                                    && !minor.is_empty()
+                                    && !patch.is_empty()
+                                    && major.bytes().all(|b| b.is_ascii_digit())
+                                    && minor.bytes().all(|b| b.is_ascii_digit())
+                                    && patch.bytes().all(|b| b.is_ascii_digit())
+                        );
+                        if !valid_version {
+                            return Err(original_error);
+                        }
+                        (name, Some(version))
+                    }
+                    None => (interface, None),
+                };
+                exact_component_name(interface_name, &path)?;
+                let alias_base = match version_suffix {
+                    Some(_) => format!("{namespace}-{package}-{interface_name}"),
+                    None => format!("{namespace}-{package}-{interface}"),
+                };
+                exact_component_name(&alias_base, &path)?
             }
         };
         insert_unique(&mut identities, &alias, module, "Component import alias")?;
