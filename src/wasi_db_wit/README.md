@@ -14,5 +14,5 @@ Calcit 在生成/校验 nominal `defenum`（`DbParam`、`DbError`）与 `defstru
 ## 兼容性约定
 
 - `http-service` world 通过 `include wasi:http/proxy@0.2.12;` 组合 WASI HTTP 服务导出，同时导入 `calcit:db/sql@0.1.0` 与 `calcit:db/kv@0.1.0`。
-- `package_wasi_http_service` 与 `package_wasi_http_proxy` 一样拒绝携带 `component-type*` 自定义段的 core module（`E_WASI_EMBEDDED_COMPONENT_TYPE`）及 Preview 1 导入（`E_WASI_HTTP_PREVIEW1_IMPORT`），并在最终 Component 中仅保留 core module 实际导入的接口。
+- `package_wasi_http_service` 与 `package_wasi_http_proxy` 一样拒绝携带 `component-type*` 自定义段的 core module（`E_WASI_EMBEDDED_COMPONENT_TYPE`）及 Preview 1 导入（`E_WASI_HTTP_PREVIEW1_IMPORT`），在最终 Component 中省略核心模块未使用的功能接口（例如只导入 `sql` 时不导入 `calcit:db/kv@0.1.0`），同时保留被在用签名引用的 WIT 类型依赖接口（例如因 `db-error` / `db-param` 等类型被 `sql` 签名引用而保留 `calcit:db/types@0.1.0`）。
 - 对 `calcit:db@0.1.0` 的破坏性变更必须提升 WIT 包版本号，保持旧版本接口行为不静默漂移。

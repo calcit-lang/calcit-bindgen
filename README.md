@@ -172,7 +172,7 @@ HTTP GET 回归在 CI 以 Wasmtime 49 实测）。WIT 来源与校验摘要见
 
 HTTP + 数据库服务能力边界由 `calcit:db@0.1.0`（`calcit:db/sql@0.1.0` 与 `calcit:db/kv@0.1.0`）
 以及 `package_wasi_http_service(core_module)` 提供：当 Component contract 声明匹配的数据库同步导入时，
-`generate` / `check` 额外输出并守门 `wit/db.wit`、`calcit/db_bindings.cirru`（含零 `Dynamic` 泄漏的
+`generate` / `check` 额外输出并守门 `wit-db/db.wit`、`calcit/db_bindings.cirru`（含显式 `:schema` 条目与零 `Dynamic` 泄漏的
 `query-as` / `tx-query-as` `try-decode-map-as` 宏）与 `rust/wasmtime_db_adapter.rs`；启用 `wasmtime-db`
 feature 可获得默认拒绝权限策略、有界 `SqliteSqlBackend` / `InMemoryKvBackend` 与可复用实例的
 `HttpDbServiceRunner`。详细说明见 [WASI DB 文档](docs/wasi-db.md)。
@@ -290,7 +290,7 @@ The `package_wasi_http_service(core_module)` API extends `wasi:http/proxy@0.2.12
 with versioned `calcit:db/sql@0.1.0` and `calcit:db/kv@0.1.0` imports
 (`calcit:db/http-service@0.1.0`). When a Component contract declares matching
 synchronous `calcit:db@0.1.0` imports, `generate` and `check` emit and validate
-`wit/db.wit`, `calcit/db_bindings.cirru` (including `query-as`/`tx-query-as`
+`wit-db/db.wit`, `calcit/db_bindings.cirru` (including `:schema`-annotated DB imports and `query-as`/`tx-query-as`
 macros decoding rows via `try-decode-map-as` without leaking `Dynamic`), and
 `rust/wasmtime_db_adapter.rs`. Enabling the `wasmtime-db` feature provides
 default-deny `DbConfig`, bounded `SqliteSqlBackend` / `InMemoryKvBackend`, and

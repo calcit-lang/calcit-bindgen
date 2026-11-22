@@ -11,14 +11,14 @@
 - `interface kv`：`get`、`set`、`delete`（支持字节值、前缀权限校验与可选毫秒 TTL）。
 - `world http-service`：通过 `include wasi:http/proxy@0.2.12;` 组合 WASI HTTP 服务导出与 `sql` / `kv` 导入。
 
-`calcit_bindgen::package_wasi_http_service(core_module)` 会拒绝 WASI Preview 1 导入（`E_WASI_HTTP_PREVIEW1_IMPORT`）与预先嵌入的 `component-type*` 自定义段（`E_WASI_EMBEDDED_COMPONENT_TYPE`），并在产物 Component 中只保留实际使用到的接口（例如只导入 `sql` 时不要求宿主提供 `kv`）。
+`calcit_bindgen::package_wasi_http_service(core_module)` 会拒绝 WASI Preview 1 导入（`E_WASI_HTTP_PREVIEW1_IMPORT`）与预先嵌入的 `component-type*` 自定义段（`E_WASI_EMBEDDED_COMPONENT_TYPE`），并在产物 Component 中按核心模块实际导入精确裁剪未使用的功能接口（例如只导入 `sql` 时省略 `calcit:db/kv@0.1.0`），同时保留被在用签名引用的 WIT 类型依赖接口（例如 `db-error` 所在的 `calcit:db/types@0.1.0`）。
 
 ## 生成产物与零 `Dynamic` 查询解码
 
-当 Component Interface IR 包含 `calcit:db/sql@0.1.0` 或 `calcit:db/kv@0.1.0` 同步导入并严格匹配上述 nominal shape 时，`generate` 与 `check` 会额外生成并由 manifest 校验三个受管文件：
+当 Component Interface IR 包含 `calcit:db/sql@0.1.0` 或 `calcit:db/kv@0.1.0` 同步导入并严格匹配上述 nominal shape 时，`generate` 与 `check` 会额外生成并由 manifest 校验三个受管文件（并将数据库 WIT 放在 `wit/` 根目录之外，避免与宿主自身的 `wit/interface.wit` 冲突）：
 
-- `wit/db.wit`：固定版本的 `calcit:db@0.1.0` WIT 合约。
-- `calcit/db_bindings.cirru`：包含 `DbParam`、`DbError`、`DbExecResult`、`DbQueryResult`、`defwasm-import` 包装，以及零 `Dynamic` 泄漏的 `query-as` / `tx-query-as` 宏：内部顺序执行 `sql-query` / `tx-query` -> `try-parse-json` -> `try-decode-map-as parsed (List ~row-type)`，直接返回 `Result (List RowStruct) DbError`（JSON 或结构解码错误统一收敛为 `DbError :decode-error`）。
+- `wit-db/db.wit`：固定版本的 `calcit:db@0.1.0` WIT 合约。
+- `calcit/db_bindings.cirru`：包含 `DbParam`、`DbError`、`DbExecResult`、`DbQueryResult`、全部带显式 `:schema` 条目的 `defwasm-import` 定义，以及零 `Dynamic` 泄漏的 `query-as` / `tx-query-as` 宏（严格 `Macro` schema）：内部顺序执行 `sql-query` / `tx-query` -> `try-parse-json` -> `try-decode-map-as parsed (List ~row-type)`，直接返回 `Result (List RowStruct) DbError`（JSON 或结构解码错误统一收敛为 `DbError :decode-error`）。
 - `rust/wasmtime_db_adapter.rs`：启用 `wasmtime-db` feature 时重新导出宿主端类型与运行器。
 
 ## 默认拒绝的 `wasmtime-db` 宿主实现
@@ -27,11 +27,16 @@
 
 ```rust
 use calcit_bindgen::wasmtime_db::{
-    DbConfig, HttpDbServiceRunner, InMemoryKvBackend, SqliteSqlBackend, WasmtimeDbState,
+    DbConfig, HttpDbServiceRunner, InMemoryKvBackend, SqlBackend, SqliteSqlBackend,
+    WasmtimeDbState,
 };
 
 let mut sql = SqliteSqlBackend::in_memory()?;
-sql.exec(&DbConfig::default().allow_sql_ddl(), "CREATE TABLE ...", &[])?;
+sql.exec(
+    &DbConfig::default().allow_sql_ddl(),
+    "CREATE TABLE items (id INTEGER PRIMARY KEY)",
+    &[],
+)?;
 
 let config = DbConfig::default()
     .allow_sql_read()
