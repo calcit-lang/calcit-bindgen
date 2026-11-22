@@ -108,6 +108,21 @@ fn reject_preview1_imports(
     Ok(())
 }
 
+fn reject_embedded_component_metadata(core_module: &[u8]) -> Result<(), String> {
+    for payload in Parser::new(0).parse_all(core_module) {
+        if let Payload::CustomSection(section) =
+            payload.map_err(|error| format!("invalid core WebAssembly module: {error}"))?
+            && section.name().starts_with("component-type")
+        {
+            return Err(format!(
+                "E_WASI_EMBEDDED_COMPONENT_TYPE: core module already contains `{}` custom section; pass a plain core module without pre-embedded Component metadata",
+                section.name()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn package_wasi_world(
     core_module: &[u8],
     preview1_error_code: &str,
@@ -119,6 +134,7 @@ fn package_wasi_world(
 ) -> Result<Vec<u8>, String> {
     validate_core_module(core_module)?;
     reject_preview1_imports(core_module, preview1_error_code, preview1_remediation)?;
+    reject_embedded_component_metadata(core_module)?;
     let mut resolve = Resolve::default();
     let mut target_package = None;
     for &(name, wit) in packages {

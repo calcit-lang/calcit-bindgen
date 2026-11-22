@@ -8,8 +8,11 @@ use std::time::{Duration, Instant};
 use calcit_bindgen::package_wasi_http_proxy;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use wasm_encoder::{CustomSection, Section};
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
+use wit_component::{StringEncoding, embed_component_metadata};
+use wit_parser::Resolve;
 
 struct ChildGuard(Child);
 
@@ -210,11 +213,11 @@ fn packages_and_serves_wasi_0212_http_proxy_component() {
             "wasi:http/types@0.2.12",
         ]
     );
-    assert!(
-        component_type
-            .exports(&engine)
-            .any(|(name, _)| name == "wasi:http/incoming-handler@0.2.12")
-    );
+    let exports = component_type
+        .exports(&engine)
+        .map(|(name, _)| name)
+        .collect::<Vec<_>>();
+    assert_eq!(exports, vec!["wasi:http/incoming-handler@0.2.12"]);
 
     let Some(wasmtime_cli) = std::env::var_os("WASMTIME_49_CLI") else {
         return;
@@ -289,6 +292,58 @@ fn rejects_component_input_in_wasi_http_proxy() {
         "{error}"
     );
     assert!(!error.contains("--core-module"), "{error}");
+}
+
+#[test]
+fn rejects_pre_embedded_component_type_metadata_in_wasi_http_proxy() {
+    let base_wat = minimal_http_proxy_wat("ok");
+    let extra_wat = format!(
+        "{}\n  (func (export \"health-check\")))",
+        base_wat
+            .trim_end()
+            .strip_suffix(')')
+            .expect("module closing paren")
+    );
+    let core = wat::parse_str(extra_wat).expect("compile proxy core module with extra export");
+
+    let mut resolve = Resolve::default();
+    let package = resolve
+        .push_str(
+            "extra.wit",
+            "package test:extra;\nworld extra {\n  export health-check: func();\n}\n",
+        )
+        .expect("parse extra world WIT");
+    let world = resolve
+        .select_world(&[package], Some("extra"))
+        .expect("select extra world");
+
+    let mut with_metadata = core.clone();
+    embed_component_metadata(&mut with_metadata, &resolve, world, StringEncoding::UTF8)
+        .expect("embed extra component-type metadata");
+    let error = package_wasi_http_proxy(&with_metadata)
+        .expect_err("pre-embedded component-type metadata must be rejected");
+    assert!(
+        error.starts_with("E_WASI_EMBEDDED_COMPONENT_TYPE:"),
+        "{error}"
+    );
+    assert!(error.contains("component-type"), "{error}");
+
+    let mut with_prefixed_metadata = core;
+    CustomSection {
+        name: "component-type:extra".into(),
+        data: (&[]).into(),
+    }
+    .append_to(&mut with_prefixed_metadata);
+    let prefixed_error = package_wasi_http_proxy(&with_prefixed_metadata)
+        .expect_err("prefixed component-type custom section must be rejected");
+    assert!(
+        prefixed_error.starts_with("E_WASI_EMBEDDED_COMPONENT_TYPE:"),
+        "{prefixed_error}"
+    );
+    assert!(
+        prefixed_error.contains("component-type:extra"),
+        "{prefixed_error}"
+    );
 }
 
 #[test]

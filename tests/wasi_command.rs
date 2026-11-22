@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
+use wit_component::{StringEncoding, embed_component_metadata};
+use wit_parser::Resolve;
 
 #[test]
 fn packages_wasi_031_command_run_export() {
@@ -32,12 +34,12 @@ fn packages_wasi_031_command_run_export() {
         );
         let component = Component::new(&engine, &bytes).expect("validate WASI command Component");
         assert_eq!(component.component_type().imports(&engine).count(), 0);
-        assert!(
-            component
-                .component_type()
-                .exports(&engine)
-                .any(|(name, _)| name == "wasi:cli/run@0.3.1")
-        );
+        let component_type = component.component_type();
+        let exports = component_type
+            .exports(&engine)
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        assert_eq!(exports, vec!["wasi:cli/run@0.3.1"]);
 
         if let Some(wasmtime_cli) = std::env::var_os("WASMTIME_49_CLI") {
             let path = temporary.path().join(format!("command-{result_tag}.wasm"));
@@ -284,6 +286,38 @@ fn rejects_component_input_without_cli_specific_error() {
         "{error}"
     );
     assert!(!error.contains("--core-module"), "{error}");
+}
+
+#[test]
+fn rejects_pre_embedded_component_type_metadata_in_wasi_command() {
+    let mut core = wat::parse_str(
+        r#"(module
+          (memory (export "memory") 1)
+          (func (export "wasi:cli/run@0.3.1#run") (result i32) i32.const 0)
+          (func (export "health-check")))"#,
+    )
+    .expect("compile command core module with extra export");
+
+    let mut resolve = Resolve::default();
+    let package = resolve
+        .push_str(
+            "extra.wit",
+            "package test:extra;\nworld extra {\n  export health-check: func();\n}\n",
+        )
+        .expect("parse extra world WIT");
+    let world = resolve
+        .select_world(&[package], Some("extra"))
+        .expect("select extra world");
+
+    embed_component_metadata(&mut core, &resolve, world, StringEncoding::UTF8)
+        .expect("embed extra component-type metadata");
+    let error = package_wasi_command(&core)
+        .expect_err("pre-embedded component-type metadata must be rejected");
+    assert!(
+        error.starts_with("E_WASI_EMBEDDED_COMPONENT_TYPE:"),
+        "{error}"
+    );
+    assert!(error.contains("component-type"), "{error}");
 }
 
 #[test]
