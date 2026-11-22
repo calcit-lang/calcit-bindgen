@@ -84,9 +84,11 @@ pub(crate) fn package(
     })
 }
 
-/// Package a core module against the WASI v0.3.1 `wasi:cli/command` world.
-pub fn package_wasi_command(core_module: &[u8]) -> Result<Vec<u8>, String> {
-    validate_core_module(core_module)?;
+fn reject_preview1_imports(
+    core_module: &[u8],
+    error_code: &str,
+    remediation: &str,
+) -> Result<(), String> {
     for payload in Parser::new(0).parse_all(core_module) {
         if let Payload::ImportSection(reader) =
             payload.map_err(|error| format!("invalid core WebAssembly module: {error}"))?
@@ -96,46 +98,114 @@ pub fn package_wasi_command(core_module: &[u8]) -> Result<Vec<u8>, String> {
                     import.map_err(|error| format!("invalid core WebAssembly import: {error}"))?;
                 if import.module == "wasi_snapshot_preview1" {
                     return Err(format!(
-                        "E_WASI_COMMAND_PREVIEW1_IMPORT: `{}` still imports WASI Preview 1; emit WASI 0.3 Canonical ABI imports instead",
+                        "{error_code}: `{}` still imports WASI Preview 1; {remediation}",
                         import.name
                     ));
                 }
             }
         }
     }
+    Ok(())
+}
+
+fn reject_embedded_component_metadata(core_module: &[u8]) -> Result<(), String> {
+    for payload in Parser::new(0).parse_all(core_module) {
+        if let Payload::CustomSection(section) =
+            payload.map_err(|error| format!("invalid core WebAssembly module: {error}"))?
+            && section.name().starts_with("component-type")
+        {
+            return Err(format!(
+                "E_WASI_EMBEDDED_COMPONENT_TYPE: core module already contains `{}` custom section; pass a plain core module without pre-embedded Component metadata",
+                section.name()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn package_wasi_world(
+    core_module: &[u8],
+    preview1_error_code: &str,
+    preview1_remediation: &str,
+    packages: &[(&str, &str)],
+    world_package_file: &str,
+    world_name: &str,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    validate_core_module(core_module)?;
+    reject_preview1_imports(core_module, preview1_error_code, preview1_remediation)?;
+    reject_embedded_component_metadata(core_module)?;
     let mut resolve = Resolve::default();
-    let mut cli_package = None;
-    for (name, wit) in [
-        ("clocks.wit", include_str!("wasi_wit/clocks.wit")),
-        ("filesystem.wit", include_str!("wasi_wit/filesystem.wit")),
-        ("sockets.wit", include_str!("wasi_wit/sockets.wit")),
-        ("random.wit", include_str!("wasi_wit/random.wit")),
-        ("cli.wit", include_str!("wasi_wit/cli.wit")),
-    ] {
+    let mut target_package = None;
+    for &(name, wit) in packages {
         let package = resolve
             .push_str(name, wit)
-            .map_err(|error| format!("invalid pinned WASI 0.3 WIT package {name}: {error:#}"))?;
-        if name == "cli.wit" {
-            cli_package = Some(package);
+            .map_err(|error| format!("invalid pinned {label} WIT package {name}: {error:#}"))?;
+        if name == world_package_file {
+            target_package = Some(package);
         }
     }
     let world = resolve
         .select_world(
-            &[cli_package.expect("pinned CLI WIT package is included")],
-            Some("command"),
+            &[target_package.expect("target WASI WIT package must be included")],
+            Some(world_name),
         )
-        .map_err(|error| format!("failed to select WASI 0.3 command world: {error:#}"))?;
+        .map_err(|error| format!("failed to select {label} world: {error:#}"))?;
     let mut module = core_module.to_vec();
     embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
-        .map_err(|error| format!("failed to embed WASI command WIT metadata: {error:#}"))?;
+        .map_err(|error| format!("failed to embed {label} WIT metadata: {error:#}"))?;
     let mut encoder = ComponentEncoder::default();
     encoder.module(&module).map_err(|error| {
-        format!("core module does not implement the WASI 0.3 command Canonical ABI: {error:#}")
+        format!("core module does not implement the {label} Canonical ABI: {error:#}")
     })?;
     encoder.validate(true);
     encoder.encode().map_err(|error| {
-        format!("core module does not implement the WASI 0.3 command Canonical ABI: {error:#}")
+        format!("core module does not implement the {label} Canonical ABI: {error:#}")
     })
+}
+
+/// Package a core module against the WASI v0.3.1 `wasi:cli/command` world.
+pub fn package_wasi_command(core_module: &[u8]) -> Result<Vec<u8>, String> {
+    package_wasi_world(
+        core_module,
+        "E_WASI_COMMAND_PREVIEW1_IMPORT",
+        "emit WASI 0.3 Canonical ABI imports instead",
+        &[
+            ("clocks.wit", include_str!("wasi_wit/clocks.wit")),
+            ("filesystem.wit", include_str!("wasi_wit/filesystem.wit")),
+            ("sockets.wit", include_str!("wasi_wit/sockets.wit")),
+            ("random.wit", include_str!("wasi_wit/random.wit")),
+            ("cli.wit", include_str!("wasi_wit/cli.wit")),
+        ],
+        "cli.wit",
+        "command",
+        "WASI 0.3 command",
+    )
+}
+
+/// Package a core module against the WASI v0.2.12 `wasi:http/proxy` world
+/// (exporting `wasi:http/incoming-handler@0.2.12`).
+pub fn package_wasi_http_proxy(core_module: &[u8]) -> Result<Vec<u8>, String> {
+    package_wasi_world(
+        core_module,
+        "E_WASI_HTTP_PREVIEW1_IMPORT",
+        "emit WASI 0.2 Canonical ABI imports instead",
+        &[
+            ("io.wit", include_str!("wasi_http_wit/io.wit")),
+            ("clocks.wit", include_str!("wasi_http_wit/clocks.wit")),
+            (
+                "filesystem.wit",
+                include_str!("wasi_http_wit/filesystem.wit"),
+            ),
+            ("sockets.wit", include_str!("wasi_http_wit/sockets.wit")),
+            ("random.wit", include_str!("wasi_http_wit/random.wit")),
+            ("cli.wit", include_str!("wasi_http_wit/cli.wit")),
+            ("http.wit", include_str!("wasi_http_wit/http.wit")),
+        ],
+        "http.wit",
+        "proxy",
+        "WASI 0.2 HTTP proxy",
+    )
 }
 
 fn inspect_lifecycle_surface(bytes: &[u8]) -> Result<LifecycleSurface, String> {
