@@ -29,8 +29,12 @@ jobs:
           node-version: '22'
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
+      - run: cargo check --lib --no-default-features --features wasmtime-db
+      - run: cargo check --lib --no-default-features --features wasmtime-http
       - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --features wasmtime-http,wasmtime-db -- -D warnings
       - run: cargo test
+      - run: cargo test --features wasmtime-db --test wasi_http_db
       - name: Run WASI 0.3.1 command and 0.2.12 HTTP proxy Components with Wasmtime 49.0.0
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -108,4 +112,4 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features wasmtime-http,wasmtime-db

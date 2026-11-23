@@ -1,0 +1,7 @@
+# 2026-11-23 01:00 — Add versioned `calcit:db@0.1.0` WIT boundary and `wasmtime-db` host capability
+
+- Added `src/wasi_db_wit/db.wit` and `src/wasi_db_wit/README.md` pinning `calcit:db/types@0.1.0`, `calcit:db/sql@0.1.0`, `calcit:db/kv@0.1.0`, and `world http-service`.
+- Added `package_wasi_http_service` in `src/component.rs` and extended `component_import_aliases` in `src/wit.rs` to handle semver-suffixed package-qualified imports (`@major.minor.patch`).
+- Added `src/db_adapter.rs` and updated `src/generate.rs` / `src/lib.rs` to validate matching `calcit:db@0.1.0` contracts and emit `wit/db.wit`, `calcit/db_bindings.cirru` (including typed `query-as` / `tx-query-as` macros), and `rust/wasmtime_db_adapter.rs`.
+- Added `src/wasmtime_db.rs` behind the optional `wasmtime-db` feature (`tokio` `macros`, `sync`, `time` + `rusqlite` `bundled`) with default-deny `DbConfig`, bounded `SqliteSqlBackend` (INSERT/REPLACE-only `last_insert_id`, `RETURNING` read+write checks) / `InMemoryKvBackend`, `add_to_linker`, and `HttpDbServiceRunner` enforcing peak linear memory limits and automatic post-turn rollback of leaked transactions.
+- Added `tests/wasi_http_db.rs`, `docs/wasi-db.md`, README documentation, and CI checks (including `--no-default-features --features wasmtime-db` / `wasmtime-http` standalone feature checks and `cargo doc --no-deps --features wasmtime-http,wasmtime-db`) in `.github/workflows/check.yaml`; bumped crate version to `0.1.12`.
