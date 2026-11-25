@@ -7,7 +7,7 @@ Interface IR.
 
 ## Status / 状态
 
-本仓库处于 **active development / experimental tooling** 阶段。native Interface IR v2/v3 的
+本仓库处于 **active development / experimental tooling** 阶段。native Interface IR v2/v3 及 v4 既有值类型子集的
 validation、compatibility diff、canonical generate/check 与严格同步 Rust、Calcit、TypeScript、WIT
 backends 已可用；Component Interface IR v2/v3 的 production 路径也可将 Calcit 生成的
 Bool/Buffer/Number/String、递归同质 List、闭合单态 Option/Result、单态 Struct record 及 Unit 结果的 core module 打包为可运行 WebAssembly Component。公开、版本化的 Interface IR 和
@@ -15,7 +15,11 @@ Canonical ABI adapter 由 Calcit core 定义；WIT、组件封装、manifest 和
 更完整的复合类型支持与真实生态迁移仍由
 [calcit-bindgen#5](https://github.com/calcit-lang/calcit-bindgen/issues/5) 追踪。
 
-This repository is active experimental tooling. Native Interface IR v2/v3
+native v4 暂支持沿用 v3 值类型的接口，包括 Calcit 0.45.1 导出的标准库 hash 接口；
+v4 新增的 union 和 FfiResource 尚未实现，会明确拒绝，不能用于这些类型的生成。
+完整支持跟踪 [#62](https://github.com/calcit-lang/calcit-bindgen/issues/62)。
+
+This repository is active experimental tooling. Native Interface IR v2/v3 and the v4 existing value-type subset
 validation, compatibility diff, canonical generate/check, and strict
 synchronous Rust, Calcit, TypeScript, and WIT backends are usable. The first
 Component Interface IR v2/v3 production path also packages Calcit-generated
@@ -24,17 +28,21 @@ the public versioned contract and Canonical ABI adapters; this tool owns WIT,
 component packaging, manifests, and cross-host verification. Composite types
 and broader real-module migration remain tracked by calcit-bindgen#5.
 
+Native v4 currently accepts only the existing v3 value-type subset, including
+the standard library hash interface exported by Calcit 0.45.1. The new union
+and FfiResource kinds are explicitly rejected pending full support in #62.
+
 ## 中文
 
 该 crate 独立于 Calcit core，严格消费 `calcit ffi export` 产生的版本化 Interface IR。
 Component contract 默认使用 Cirru EDN；需要接入只接受 JSON 的工具时，可显式指定
-`--format json`。native v2/v3 envelope/document 支持 JSON 校验和兼容性 diff，确保
+`--format json`。native v2/v3 与 v4 既有值类型 envelope/document 支持 JSON 校验和兼容性 diff，确保
 未知版本、缺失 declaration、错误 nominal kind/arity、非 monomorphic callable 在
 进入生成器前失败。
 
 输入为 `calcit ffi export --json` envelope 时，还会校验 envelope schema ID、依赖
 过滤条件、summary 计数、完整结构化 diagnostics 与 core 生成的 revision digest。
-裸 Interface IR v2/v3 document 也是受支持输入；两种入口都会按公开 JSON schema 拒绝
+裸 Interface IR v2/v3 与 v4 既有值类型 document 也是受支持输入；两种入口都会按公开 JSON schema 拒绝
 未知字段。`filters.namespace` 是 v1 必填字段，未筛选时必须为 `null`。loader 会先
 验证 envelope metadata，再抽取并返回内层 `Document`；返回值本身不保留 envelope
 metadata。
@@ -182,7 +190,7 @@ feature 可获得默认拒绝权限策略、有界 `SqliteSqlBackend` / `InMemor
 This crate is independent of Calcit core and strictly consumes versioned
 Interface IR emitted by `calcit ffi export`. Component contracts default to
 Cirru EDN; use `--format json` only when interoperating with JSON-only tooling.
-Native v2/v3 envelopes/documents are JSON-compatible and support compatibility
+Native v2/v3 and v4 existing value-type envelopes/documents are JSON-compatible and support compatibility
 diffs before generation. Unknown versions, missing declarations, nominal
 kind/arity mismatches, and non-monomorphic callables fail explicitly.
 
@@ -200,7 +208,7 @@ cargo run -- check component-interface.cirru \
 
 For a `calcit ffi export --json` envelope, validation also checks the envelope
 schema ID, dependency filter, summary counts, complete structured diagnostics,
-and the core-produced revision digest. Raw Interface IR v2/v3 documents remain a
+and the core-produced revision digest. Raw Interface IR v2/v3 and v4 existing value-type documents remain a
 supported input. Both entry forms reject unknown fields in line with the public
 JSON schema. `filters.namespace` is required by v1 and must be `null` when no
 filter is active. The loader validates envelope metadata before extracting and

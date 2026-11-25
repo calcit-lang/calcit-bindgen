@@ -13,6 +13,8 @@ const FFI_INTERFACE_IR_V2_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/ffi-interface-ir-v2.schema.json";
 const FFI_INTERFACE_IR_V3_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/ffi-interface-ir-v3.schema.json";
+const FFI_INTERFACE_IR_V4_SCHEMA_ID: &str =
+    "https://calcit-lang.org/schemas/ffi-interface-ir-v4.schema.json";
 const COMPONENT_INTERFACE_IR_V2_SCHEMA_ID: &str =
     "https://calcit-lang.org/schemas/component-interface-ir-v2.schema.json";
 const COMPONENT_INTERFACE_IR_V3_SCHEMA_ID: &str =
@@ -212,9 +214,10 @@ fn validate_export_envelope(envelope: &ExportEnvelope) -> Result<(), String> {
     let expected_schema = match envelope.data.interface.version {
         2 => FFI_INTERFACE_IR_V2_SCHEMA_ID,
         3 => FFI_INTERFACE_IR_V3_SCHEMA_ID,
+        4 => FFI_INTERFACE_IR_V4_SCHEMA_ID,
         version => {
             return Err(format!(
-                "unsupported Interface IR version {version}; calcit-bindgen supports v2 and v3"
+                "unsupported Interface IR version {version}; calcit-bindgen supports v2, v3, and the v4 value-type subset"
             ));
         }
     };
@@ -414,9 +417,9 @@ fn validate_export_summary(
 }
 
 pub fn validate_document(document: &Document) -> Result<(), String> {
-    if !matches!(document.version, 2 | 3) {
+    if !matches!(document.version, 2..=4) {
         return Err(format!(
-            "unsupported Interface IR version {}; calcit-bindgen supports v2 and v3",
+            "unsupported Interface IR version {}; calcit-bindgen supports v2, v3, and the v4 value-type subset",
             document.version
         ));
     }
