@@ -620,13 +620,46 @@ fn loads_native_v3_export_envelope_with_numeric_widths() {
 }
 
 #[test]
+fn native_v4_accepts_existing_value_types_but_rejects_unimplemented_kinds() {
+    let mut source = document();
+    source.version = 4;
+    let envelope = export_envelope(&source, vec![]);
+    assert_eq!(load_json(&envelope).expect("v4 value-type subset"), source);
+
+    let mut union = envelope.clone();
+    union["data"]["interface"]["declarations"][0]["kind"] = serde_json::json!("union");
+    assert!(
+        load_json(&union)
+            .unwrap_err()
+            .contains("unknown variant `union`")
+    );
+
+    let mut resource = envelope.clone();
+    resource["data"]["interface"]["definitions"][0]["signature"]["result"] =
+        serde_json::json!({"kind": "ffi-resource"});
+    assert!(
+        load_json(&resource)
+            .unwrap_err()
+            .contains("unknown variant `ffi-resource`")
+    );
+
+    let mut future = envelope;
+    future["data"]["interface"]["version"] = serde_json::json!(5);
+    assert!(
+        load_json(&future)
+            .unwrap_err()
+            .contains("unsupported Interface IR version 5")
+    );
+}
+
+#[test]
 fn rejects_unknown_versions_and_missing_declarations() {
     let mut old = document();
     old.version = 1;
     assert!(
         validate_document(&old)
             .unwrap_err()
-            .contains("supports v2 and v3")
+            .contains("supports v2, v3, and the v4 value-type subset")
     );
 
     let mut missing = document();
